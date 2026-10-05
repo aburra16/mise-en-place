@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { deletionFor } from "../src/deletion.js";
-import { contentHash, diffItems } from "../src/diff.js";
+import { changedFields, contentHash, diffItems, parseTags, summarizeChanges } from "../src/diff.js";
 import type { Tags } from "../src/item.js";
 import { selectPilot } from "../src/pilot.js";
 import type { LiveItem } from "../src/state.js";
@@ -188,5 +188,108 @@ describe("selectPilot", () => {
     const items = grid();
     expect(selectPilot(items, 1000)).toHaveLength(items.length);
     expect(selectPilot(items, 0)).toEqual([]);
+  });
+});
+
+describe("parseTags", () => {
+  it("reads stored tags JSON", () => {
+    expect(parseTags('[["d","a"],["t","x"],["t","y"]]')).toEqual([["d", "a"], ["t", "x"], ["t", "y"]]);
+  });
+
+  it("reads text that is not a list of string tags as no tags", () => {
+    expect(parseTags("not json")).toEqual([]);
+    expect(parseTags('{"d":"a"}')).toEqual([]);
+    expect(parseTags('[["d","a"],"loose",["n",1],["ok","v"]]')).toEqual([["d", "a"], ["ok", "v"]]);
+  });
+});
+
+describe("changedFields", () => {
+  it("names the tags whose values differ, sorted", () => {
+    const before: Tags = [["d", "a"], ["name", "Old"], ["phone", "1"], ["address", "x"]];
+    const after: Tags = [["d", "a"], ["name", "New"], ["phone", "1"], ["address", "y"]];
+    expect(changedFields(before, after)).toEqual(["address", "name"]);
+  });
+
+  it("counts an added tag and a removed tag as differing", () => {
+    const before: Tags = [["d", "a"], ["phone", "1"]];
+    const after: Tags = [["d", "a"], ["website", "https://x"]];
+    expect(changedFields(before, after)).toEqual(["phone", "website"]);
+  });
+
+  it("compares a repeated tag as a group, in order", () => {
+    const same: Tags = [["d", "a"], ["t", "cafe"], ["t", "austin"]];
+    expect(changedFields(same, [...same])).toEqual([]);
+    expect(changedFields(same, [["d", "a"], ["t", "cafe"], ["t", "austin"], ["t", "mexican"]])).toEqual(["t"]);
+    expect(changedFields(same, [["d", "a"], ["t", "austin"], ["t", "cafe"]])).toEqual(["t"]);
+  });
+
+  it("is empty for identical tags, whatever order the tag names appear in", () => {
+    expect(changedFields([["d", "a"], ["name", "N"]], [["name", "N"], ["d", "a"]])).toEqual([]);
+  });
+});
+
+describe("summarizeChanges", () => {
+  const place = (n: number, extra: Tags = []): Tags => [["d", `osm-node-${n}`], ["name", `Place ${n}`], ...extra];
+  const liveFor = (...items: Tags[]) => liveMap(...items.map((t) => liveOf(t)));
+
+  it("counts, per tag, the changed items where it differs: address on 3 items and phone on 1", () => {
+    const old = [1, 2, 3, 4, 5].map((n) => place(n, [["address", "1 Main St"], ["phone", "555"]]));
+    const now = old.map((tags, i) =>
+      i < 3 ? place(i + 1, [["address", "2 Oak Ave"], ["phone", "555"]])
+      : i === 3 ? place(4, [["address", "1 Main St"], ["phone", "556"]])
+      : tags,
+    );
+    const changed = now.filter((tags, i) => JSON.stringify(tags) !== JSON.stringify(old[i]));
+
+    const summary = summarizeChanges(changed, liveFor(...old));
+
+    expect(summary.counts).toEqual([
+      { field: "address", items: 3 },
+      { field: "phone", items: 1 },
+    ]);
+  });
+
+  it("counts added, removed and modified as differing, most items first and ties by name", () => {
+    const old = [place(1, [["phone", "1"]]), place(2, [["website", "w"]]), place(3)];
+    const now = [place(1, [["phone", "2"]]), place(2), place(3, [["website", "w"]])];
+
+    const { counts } = summarizeChanges(now, liveFor(...old));
+
+    expect(counts).toEqual([
+      { field: "website", items: 2 }, // removed from 2, added to 3
+      { field: "phone", items: 1 },
+    ]);
+  });
+
+  it("lists the first 10 changed items as examples with d, name and the changed tag names", () => {
+    const old = Array.from({ length: 12 }, (_, i) => place(i + 100, [["phone", "1"], ["address", "a"]]));
+    const now = old.map((tags, i) => (i === 0 ? place(100, [["phone", "2"], ["address", "b"]]) : place(i + 100, [["phone", "2"], ["address", "a"]])));
+
+    const summary = summarizeChanges(now, liveFor(...old));
+
+    expect(summary.examples).toHaveLength(10);
+    expect(summary.examples[0]).toEqual({ d: "osm-node-100", name: "Place 100", fields: ["address", "phone"] });
+    expect(summary.examples[1]).toEqual({ d: "osm-node-101", name: "Place 101", fields: ["phone"] });
+    expect(summary.examples.map((e) => e.d)).toEqual(now.slice(0, 10).map((t) => t[0]![1]));
+    expect(summary.counts).toEqual([
+      { field: "phone", items: 12 },
+      { field: "address", items: 1 },
+    ]);
+    expect(summarizeChanges(now, liveFor(...old), 3).examples).toHaveLength(3);
+  });
+
+  it("takes the name from the new tags, and leaves it out when the item has none", () => {
+    const summary = summarizeChanges([[["d", "osm-node-1"], ["phone", "2"]]], liveFor([["d", "osm-node-1"], ["phone", "1"]]));
+    expect(summary.examples).toEqual([{ d: "osm-node-1", fields: ["phone"] }]);
+  });
+
+  it("treats an item whose live tags are unreadable as changed in every tag", () => {
+    const live = liveMap({ d: "osm-node-1", contentHash: "h", tagsJson: "garbage", latestEventId: "e" });
+    const summary = summarizeChanges([place(1, [["phone", "1"]])], live);
+    expect(summary.counts.map((c) => c.field)).toEqual(["d", "name", "phone"]);
+  });
+
+  it("is empty when nothing changed", () => {
+    expect(summarizeChanges([], liveMap())).toEqual({ counts: [], examples: [] });
   });
 });

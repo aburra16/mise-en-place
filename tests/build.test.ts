@@ -676,6 +676,86 @@ describe("build", () => {
     });
   });
 
+  describe("report.md changed fields", () => {
+    /** `n` published restaurants that all carry an address and a phone. */
+    async function published(n: number): Promise<RawPlace[]> {
+      const places = restaurants(n).map((p) => ({ ...p, address: "1 Main St", phone: "+1 555 0100" }));
+      writeCache(places);
+      publishAll((await run({ runId: "r1" })).runDir);
+      return places;
+    }
+    const section = (report: string) => report.slice(report.indexOf("## Changed fields"), report.indexOf("## Deletions"));
+
+    it("counts the changed items per tag: address on 3 items and phone on 1", async () => {
+      const before = await published(6);
+      writeCache(
+        before.map((p, i) => (i < 3 ? { ...p, address: "2 Oak Ave" } : i === 3 ? { ...p, phone: "+1 555 0199" } : p)),
+        "2026-10-06",
+      );
+
+      const result = await run({ runId: "r2" });
+
+      expect(result).toMatchObject({ created: 0, changed: 4, unchanged: 2 });
+      const changed = section(readFileSync(join(result.runDir, "report.md"), "utf8"));
+      expect(changed).toMatch(/\| tag \| changed items \|/);
+      expect(changed).toMatch(/\| address \| 3 \|\n\| phone \| 1 \|/); // most items first
+      expect(changed).not.toMatch(/\| (name|alt|d) \|/);
+      expect(changed).toContain("- `osm-node-1000`: `Place 0` (address)");
+      expect(changed).toContain("- `osm-node-1003`: `Place 3` (phone)");
+      expect(changed).not.toContain("osm-node-1004");
+    });
+
+    it("counts a renamed place under name and alt, and an added field as differing", async () => {
+      const before = await published(3);
+      writeCache(
+        before.map((p, i) => (i === 0 ? { ...p, name: "Renamed", website: "https://example.org" } : p)),
+        "2026-10-06",
+      );
+
+      const result = await run({ runId: "r2" });
+
+      const changed = section(readFileSync(join(result.runDir, "report.md"), "utf8"));
+      for (const field of ["alt", "name", "website"]) expect(changed).toContain(`| ${field} | 1 |`);
+      expect(changed).toContain("- `osm-node-1000`: `Renamed` (alt, name, website)");
+    });
+
+    it("shows at most 10 examples while the table counts every changed item", async () => {
+      const before = await published(14);
+      writeCache(before.map((p) => ({ ...p, phone: "+1 555 0123" })), "2026-10-06");
+
+      const result = await run({ runId: "r2" });
+
+      expect(result.changed).toBe(14);
+      const changed = section(readFileSync(join(result.runDir, "report.md"), "utf8"));
+      expect(changed).toContain("| phone | 14 |");
+      expect(changed.match(/^- `osm-node-/gm)).toHaveLength(10);
+      expect(changed).toContain("osm-node-1009");
+      expect(changed).not.toContain("osm-node-1010");
+    });
+
+    it("says none when no item changed, and for a first build", async () => {
+      await published(3);
+      const same = await run({ runId: "r2" });
+      expect(section(readFileSync(join(same.runDir, "report.md"), "utf8"))).toMatch(/## Changed fields\n\nnone\n/);
+
+      state.close();
+      state = openState(":memory:");
+      const first = await run({ runId: "r3" });
+      expect(section(readFileSync(join(first.runDir, "report.md"), "utf8"))).toMatch(/## Changed fields\n\nnone\n/);
+    });
+
+    it("keeps markdown in a changed item's name literal", async () => {
+      const before = await published(1);
+      writeCache([{ ...before[0]!, name: "*Star* _Bar_" }], "2026-10-06");
+
+      const result = await run({ runId: "r2" });
+
+      expect(section(readFileSync(join(result.runDir, "report.md"), "utf8"))).toContain(
+        "- `osm-node-1000`: `*Star* _Bar_` (alt, name)",
+      );
+    });
+  });
+
   it("writes a report with counts, skips, duplicates, coverage and samples", async () => {
     writeCache(FIXTURE);
     const { runDir } = await run({ runId: "r1" });

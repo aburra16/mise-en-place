@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Tags } from "./item.js";
+import { tagValue, type Tags } from "./item.js";
 import type { LiveItem } from "./state.js";
 
 /**
@@ -43,4 +43,80 @@ export function diffItems(
     diff.gone = [...live.keys()].filter((d) => !built.has(d) && !opts.held?.has(d)).sort();
   }
   return diff;
+}
+
+/** The tags stored for an item (state's `tagsJson`), or none if the text is not a list of string tags. */
+export function parseTags(json: string): Tags {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((t): t is string[] => Array.isArray(t) && t.every((v) => typeof v === "string"));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The tag names whose tags differ between `before` and `after`, sorted. The tags of one name
+ * are compared as a group, in order, so a value added, removed or modified all count as
+ * differing. This is the one definition of "changed field" the console and `build` share.
+ */
+export function changedFields(before: Tags, after: Tags): string[] {
+  const byName = (tags: Tags): Map<string, string> => {
+    const groups = new Map<string, Tags>();
+    for (const tag of tags) {
+      const name = tag[0] ?? "";
+      groups.set(name, [...(groups.get(name) ?? []), tag]);
+    }
+    return new Map([...groups].map(([name, group]) => [name, JSON.stringify(group)]));
+  };
+  const was = byName(before);
+  const now = byName(after);
+  return [...new Set([...was.keys(), ...now.keys()])].filter((name) => was.get(name) !== now.get(name)).sort();
+}
+
+/** A changed item for the report: its `d`, its new name if it has one, and the tag names that differ. */
+export interface ChangedItem {
+  d: string;
+  name?: string;
+  fields: string[];
+}
+
+export interface ChangeSummary {
+  /**
+   * Per tag name, the number of changed items where that tag differs from the live item's:
+   * most items first, ties by name. A BTC Map reformat shows up here as one tag with a huge count.
+   */
+  counts: { field: string; items: number }[];
+  /** The first `examples` changed items, in the order given (`diffItems` gives them by `d`). */
+  examples: ChangedItem[];
+}
+
+/**
+ * Compares each changed item with the live item of the same `d` through `changedFields`, the
+ * same function the console uses. A live item whose stored tags cannot be read counts as
+ * having none, so every tag of the new item differs.
+ */
+export function summarizeChanges(
+  changed: readonly Tags[],
+  live: ReadonlyMap<string, LiveItem>,
+  examples = 10,
+): ChangeSummary {
+  const counts = new Map<string, number>();
+  const shown: ChangedItem[] = [];
+  for (const tags of changed) {
+    const d = tagValue(tags, "d") ?? "";
+    const fields = changedFields(parseTags(live.get(d)?.tagsJson ?? "[]"), tags);
+    for (const field of fields) counts.set(field, (counts.get(field) ?? 0) + 1);
+    if (shown.length < examples) {
+      const name = tagValue(tags, "name");
+      shown.push(name === undefined ? { d, fields } : { d, name, fields });
+    }
+  }
+  return {
+    counts: [...counts]
+      .map(([field, items]) => ({ field, items }))
+      .sort((a, b) => b.items - a.items || (a.field < b.field ? -1 : a.field > b.field ? 1 : 0)),
+    examples: shown,
+  };
 }

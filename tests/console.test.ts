@@ -442,6 +442,17 @@ describe("GET /api/diff", () => {
     expect(body.examples.gone).toEqual([{ d: "osm-way-102", name: "Hop Works", category: "brewery", locality: "Portland" }]);
   });
 
+  it("lists every changed tag name, sorted, with an added or removed tag counted as changed", async () => {
+    seedLive([{ ...TACO, phone: "1", website: "https://old.example" }]);
+    writeCache([{ ...TACO, address: "1 Main St", phone: "2" }]); // phone changed, address added, website removed
+    await start();
+
+    const { body } = await api<DiffBody>("/api/diff");
+
+    expect(body.examples.changed).toHaveLength(1);
+    expect(body.examples.changed[0]!.changedFields).toEqual(["address", "phone", "website"]);
+  });
+
   it("uses the newest cache file", async () => {
     seedLive(SEED);
     writeCache([TACO], "2026-09-01");

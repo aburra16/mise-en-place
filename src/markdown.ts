@@ -1,4 +1,5 @@
 import { fieldCoverage, type Duplicate } from "./catalog.js";
+import type { ChangeSummary } from "./diff.js";
 import type { Tags } from "./item.js";
 
 /** A markdown table. `|` inside a cell is escaped so it cannot break the row. */
@@ -50,4 +51,26 @@ export function samples(items: Iterable<[string, Tags]>, n = 20): string {
   return chosen
     .map(([, tags]) => ["```json", "[", tags.map((t) => `  ${JSON.stringify(t)}`).join(",\n"), "]", "```"].join("\n"))
     .join("\n\n");
+}
+
+/**
+ * The changed-fields part of a report: per tag name, how many of `total` changed items differ in
+ * it (added, removed or modified), then the examples with their `d`, name and changed tag names.
+ * `none` for no changed items.
+ */
+export function changedFieldsSection(summary: ChangeSummary, total: number): string {
+  if (total === 0) return "none";
+  return [
+    `${total} changed item${total === 1 ? "" : "s"}. Per tag, how many of them differ from the live item (added, removed or modified):`,
+    "",
+    table(["tag", "changed items"], summary.counts.map(({ field, items }) => [field, items])),
+    "",
+    "Examples, in order of d:",
+    "",
+    bullets(
+      summary.examples.map(
+        ({ d, name, fields }) => `${codeSpan(d)}: ${name === undefined ? "(no name)" : codeSpan(name)} (${fields.join(", ")})`,
+      ),
+    ),
+  ].join("\n");
 }

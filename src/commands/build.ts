@@ -4,11 +4,11 @@ import type { NostrEvent } from "nostr-tools/core";
 import { buildCatalog, type Catalog } from "../catalog.js";
 import { readSearch, type Config } from "../config.js";
 import { deletionFor, type Unsigned } from "../deletion.js";
-import { diffItems } from "../diff.js";
+import { diffItems, summarizeChanges, type ChangeSummary } from "../diff.js";
 import { checkHeader, fetchHeader } from "../header.js";
 import { tagValue, type Tags } from "../item.js";
 import { configIdentity } from "../manifest.js";
-import { bullets, codeSpan, coverageTable, duplicateList, samples, table } from "../markdown.js";
+import { bullets, changedFieldsSection, codeSpan, coverageTable, duplicateList, samples, table } from "../markdown.js";
 import { selectPilot } from "../pilot.js";
 import { latestCachePath, readCache } from "../source/btcmap.js";
 import type { LiveItem, State } from "../state.js";
@@ -146,6 +146,7 @@ interface ReportInput {
   built: Map<string, Tags>;
   live: Map<string, LiveItem>;
   deletions: { d: string; eventIds: number }[];
+  changes: ChangeSummary;
   result: BuildResult;
 }
 
@@ -251,6 +252,10 @@ function renderReport(r: ReportInput): string {
     "",
     `\`unsigned.jsonl\` holds ${eventCount} events: created and changed items, then deletions. ` +
       "Unchanged items are not republished.",
+    "",
+    "## Changed fields",
+    "",
+    changedFieldsSection(r.changes, r.result.changed),
     "",
     "## Deletions",
     "",
@@ -391,6 +396,7 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
         catalog,
         built,
         live,
+        changes: summarizeChanges(diff.changed, live),
         deletions: deletions.map((del, i) => ({
           d: diff.gone[i]!,
           eventIds: del.tags.filter((t) => t[0] === "e").length,

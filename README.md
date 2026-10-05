@@ -82,7 +82,7 @@ Every step writes files the next one reads, so any stage can be inspected before
    npm run build
    ```
 
-   Review `out/<runId>/report.md` before signing. It lists counts by class, the deletions, held places, skipped places, field coverage and sample items.
+   Review `out/<runId>/report.md` before signing. It lists counts by class, the changed fields, the deletions, held places, skipped places, field coverage and sample items. "Changed fields" counts, per tag name, how many changed items differ in that tag (a value added, removed or modified), with up to 10 example items. A source reformat that would republish thousands of items shows there as one tag with a huge count.
 
 4. `sign` reads `out/<runId>/unsigned.jsonl` and the key file, and writes `out/<runId>/signed.jsonl`. It is the only step that loads the key. It signs kinds 39999 and 5 only.
 

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { buildCatalog, fieldCoverage } from "../catalog.js";
 import { verify, type RelayVerifyResult } from "../commands/verify.js";
 import type { Config } from "../config.js";
-import { diffItems } from "../diff.js";
+import { changedFields, diffItems, parseTags } from "../diff.js";
 import { tagValue, type Tags } from "../item.js";
 import { latestCachePath, readCache } from "../source/btcmap.js";
 import type { State } from "../state.js";
@@ -45,17 +45,6 @@ class HttpError extends Error {
     message: string,
   ) {
     super(message);
-  }
-}
-
-/** The tags stored for an item, or none if the stored text is not a list of string tags. */
-function parseTags(json: string): Tags {
-  try {
-    const parsed: unknown = JSON.parse(json);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((t): t is string[] => Array.isArray(t) && t.every((v) => typeof v === "string"));
-  } catch {
-    return [];
   }
 }
 
@@ -167,29 +156,14 @@ interface Example {
   changedFields?: string[];
 }
 
-function example(d: string, tags: Tags, changedFields?: string[]): Example {
+function example(d: string, tags: Tags, changed?: string[]): Example {
   const out: Example = { d };
   for (const key of ["name", "category", "locality"] as const) {
     const value = tagValue(tags, key);
     if (value !== undefined) out[key] = value;
   }
-  if (changedFields !== undefined) out.changedFields = changedFields;
+  if (changed !== undefined) out.changedFields = changed;
   return out;
-}
-
-/** The tag names whose tags differ between `before` and `after`, sorted. */
-function changedFields(before: Tags, after: Tags): string[] {
-  const byName = (tags: Tags): Map<string, string> => {
-    const groups = new Map<string, Tags>();
-    for (const tag of tags) {
-      const name = tag[0] ?? "";
-      groups.set(name, [...(groups.get(name) ?? []), tag]);
-    }
-    return new Map([...groups].map(([name, group]) => [name, JSON.stringify(group)]));
-  };
-  const was = byName(before);
-  const now = byName(after);
-  return [...new Set([...was.keys(), ...now.keys()])].filter((name) => was.get(name) !== now.get(name)).sort();
 }
 
 /**
