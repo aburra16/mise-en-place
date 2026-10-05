@@ -1,20 +1,27 @@
+import * as nip19 from "nostr-tools/nip19";
 import { givenOptions, parseArgs, type CliArgs } from "./args.js";
-import { build } from "./commands/build.js";
+import { build, runDirFor } from "./commands/build.js";
 import { census } from "./commands/census.js";
+import { sign } from "./commands/sign.js";
 import { loadConfig } from "./config.js";
 import { fetchPlaces, latestCachePath } from "./source/btcmap.js";
 import { openState } from "./state.js";
 
 type Command = (args: CliArgs) => Promise<void>;
 
-/** Refuses positional arguments and any option outside `allowed`. */
-function only(name: string, args: CliArgs, allowed: string[] = []): void {
-  if (args.positional.length > 0) throw new Error(`${name} takes no arguments, got ${args.positional.join(" ")}`);
+/** Refuses any option outside `allowed`. */
+function allowOptions(name: string, args: CliArgs, allowed: string[] = []): void {
   const refused = givenOptions(args).filter((o) => !allowed.includes(o));
   if (refused.length > 0) throw new Error(`${name} does not take ${refused.join(", ")}`);
 }
 
-/** Commands by script name. Later tasks register sign, publish, verify, header:rebroadcast and console. */
+/** Refuses positional arguments and any option outside `allowed`. */
+function only(name: string, args: CliArgs, allowed: string[] = []): void {
+  if (args.positional.length > 0) throw new Error(`${name} takes no arguments, got ${args.positional.join(" ")}`);
+  allowOptions(name, args, allowed);
+}
+
+/** Commands by script name. Later tasks register publish, verify, header:rebroadcast and console. */
 const commands = new Map<string, Command>([
   [
     "fetch",
@@ -58,6 +65,20 @@ const commands = new Map<string, Command>([
       } finally {
         state.close();
       }
+    },
+  ],
+  [
+    "sign",
+    async (args) => {
+      allowOptions("sign", args);
+      const [runId, ...extra] = args.positional;
+      if (runId === undefined || extra.length > 0) throw new Error("usage: npm run sign -- <runId>");
+      const cfg = loadConfig();
+      const runDir = runDirFor(cfg, runId);
+      const r = await sign(cfg, runDir);
+      console.log(`signed ${r.signed} events into ${runDir}/signed.jsonl`);
+      console.log(`signer pubkey ${r.pubkey}`);
+      console.log(`signer npub   ${nip19.npubEncode(r.pubkey)}`);
     },
   ],
 ]);

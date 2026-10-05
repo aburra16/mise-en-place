@@ -42,6 +42,15 @@ const ITEM_KIND = 39999;
 const FILTER_KEYS = ["country", "category"];
 const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+/**
+ * `<paths.out>/<runId>`. A run id is a plain directory name: it cannot be empty, hold a
+ * separator, or start with a dot, so it can never point outside `paths.out`.
+ */
+export function runDirFor(cfg: Config, runId: string): string {
+  if (!RUN_ID_RE.test(runId)) throw new Error(`run id "${runId}" must be a plain directory name`);
+  return join(cfg.paths.out, runId);
+}
+
 /** `2026-10-05T16:22:33.123Z` becomes `20261005T162233Z`. */
 function timestampId(now: Date): string {
   return now.toISOString().replace(/\.\d+Z$/, "Z").replace(/[-:]/g, "");
@@ -216,8 +225,7 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
   const detectGone = Object.keys(filter).length === 0 && opts.pilot === undefined;
 
   const runId = opts.runId ?? `${timestampId(new Date())}${opts.pilot !== undefined ? "-pilot" : ""}`;
-  if (!RUN_ID_RE.test(runId)) throw new Error(`run id "${runId}" must be a plain directory name`);
-  const runDir = join(cfg.paths.out, runId);
+  const runDir = runDirFor(cfg, runId);
   if (existsSync(runDir)) throw new Error(`${runDir} already exists; a run is never overwritten`);
 
   const cachePath = latestCachePath(cfg);
