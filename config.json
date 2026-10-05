@@ -1,0 +1,24 @@
+{
+  "headerCoordinate": "39998:b83a28b7e4e5d20bd960c5faeb6625f95529166b8bdb045d42634a2f35919450:food-and-drink-places",
+  "curatorPubkey": "4bded2172075221ead393a0baec9c530238ec192c2a9cdbbc7754ba8c3357b64",
+  "relays": {
+    "dcosl": "wss://dcosl.brainstorm.world",
+    "search": "wss://search.brainstorm.world"
+  },
+  "headerRelay": "dcosl",
+  "scope": {
+    "amenity": ["restaurant", "cafe", "fast_food", "bar", "pub", "biergarten", "food_court", "ice_cream"],
+    "shop": ["bakery", "pastry", "confectionery", "chocolate", "deli", "cheese", "butcher", "seafood", "greengrocer", "farm", "dairy", "spices", "coffee", "tea", "wine", "alcohol", "beverages", "health_food"],
+    "craft": ["brewery", "winery", "distillery"]
+  },
+  "btcmapFields": [
+    "id", "lat", "lon", "name", "address", "opening_hours", "osm_id", "phone", "website", "description", "image",
+    "osm:amenity", "osm:shop", "osm:craft", "osm:cuisine",
+    "osm:addr:city", "osm:addr:state", "osm:addr:postcode", "osm:addr:country",
+    "osm:payment:lightning", "osm:payment:onchain", "osm:payment:lightning_contactless"
+  ],
+  "publish": { "eventsPerSecond": 5, "okTimeoutMs": 10000 },
+  "deletionGuardFraction": 0.02,
+  "pilotSize": 150,
+  "paths": { "data": "data", "out": "out", "state": "state/state.sqlite" }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "mise-en-place",
+  "version": "0.1.0",
+  "description": "Imports BTC Map food and drink places into nostr DList items",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "fetch": "tsx src/cli.ts fetch",
+    "census": "tsx src/cli.ts census",
+    "build": "tsx src/cli.ts build",
+    "sign": "tsx src/cli.ts sign",
+    "publish": "tsx src/cli.ts publish",
+    "verify": "tsx src/cli.ts verify",
+    "header:rebroadcast": "tsx src/cli.ts header:rebroadcast",
+    "console": "tsx src/cli.ts console",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rapideditor/country-coder": "^5.6.1",
+    "better-sqlite3": "^13.0.3",
+    "ngeohash": "^0.6.4",
+    "nostr-tools": "2.25.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/ngeohash": "^0.6.8",
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.7"
+  }
+}
