@@ -145,9 +145,10 @@ function signedEvents(runDir: string): NostrEvent[] {
 /** Every sign gets a later created_at than the one before, as wall-clock runs would. */
 let clock = Math.floor(Date.now() / 1000) - 50_000;
 
+/** Each test starts from an empty state, so firstRun is set; a later build would not need it. */
 async function buildAndSign(cache: RawPlace[], runId: string, opts: BuildOptions = {}) {
   writeCache(w.cfg, cache);
-  const built = await build(w.cfg, w.state, { runId, ...opts });
+  const built = await build(w.cfg, w.state, { runId, firstRun: true, ...opts });
   await sign(w.cfg, built.runDir, { keyPath: w.keyPath, now: () => ++clock });
   return { built, runDir: built.runDir, events: signedEvents(built.runDir) };
 }

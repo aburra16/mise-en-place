@@ -81,8 +81,9 @@ function header(over: Partial<NostrEvent> = {}): NostrEvent {
   };
 }
 
+/** A build with the header injected; `firstRun` is set so an empty state is allowed. */
 function run(opts: BuildOptions = {}) {
-  return build(cfg, state, { header: header(), ...opts });
+  return build(cfg, state, { header: header(), firstRun: true, ...opts });
 }
 
 function lines(runDir: string): Unsigned[] {
@@ -415,8 +416,45 @@ describe("build", () => {
   it("stops on a header that fails the check and writes nothing", async () => {
     writeCache(FIXTURE);
     const bad = header({ tags: [["d", COORD_D], ["required", "name"]] });
-    await expect(build(cfg, state, { runId: "r1", header: bad })).rejects.toThrow(/required/);
+    await expect(build(cfg, state, { runId: "r1", header: bad, firstRun: true })).rejects.toThrow(/required/);
     expect(existsSync(cfg.paths.out) ? readdirSync(cfg.paths.out) : []).toEqual([]);
+  });
+
+  describe("an empty state", () => {
+    it("is refused without firstRun, before reading the header, and nothing is written", async () => {
+      writeCache(FIXTURE);
+      // No header injected: the refusal must come before the header read.
+      const refusal = build(cfg, state, { runId: "r1" });
+
+      await expect(refusal).rejects.toThrow(/holds no items, live or deleted/);
+      await expect(refusal).rejects.toThrow(/would publish every place again/);
+      await expect(refusal).rejects.toThrow(/restore it from a backup/);
+      await expect(refusal).rejects.toThrow(/--first-run/);
+      expect(existsSync(join(cfg.paths.out, "r1"))).toBe(false);
+    });
+
+    it("builds with firstRun", async () => {
+      writeCache(FIXTURE);
+      const result = await build(cfg, state, { runId: "r1", header: header(), firstRun: true });
+      expect(result.created).toBe(4);
+    });
+
+    it("is refused for a pilot too", async () => {
+      writeCache(FIXTURE);
+      await expect(build(cfg, state, { runId: "r1", header: header(), pilot: 2 })).rejects.toThrow(/--first-run/);
+    });
+  });
+
+  it("a state that holds items, live or only deleted, needs no firstRun", async () => {
+    writeCache(FIXTURE);
+    state.markLive("osm-node-101", "old-hash", "[]", "ev-101", 1);
+    const withLive = await build(cfg, state, { runId: "r1", header: header() });
+    expect(withLive.changed).toBe(1);
+
+    state.markDeleted("osm-node-101", 2);
+    expect(state.counts()).toEqual({ live: 0, deleted: 1 });
+    const onlyDeleted = await build(cfg, state, { runId: "r2", header: header() });
+    expect(onlyDeleted.created).toBe(4);
   });
 
   it("writes a manifest with the config it was built for, the options, cache path, header id and counts", async () => {

@@ -20,6 +20,8 @@ export interface BuildOptions {
   filter?: Record<string, string>;
   /** Let deletions past the guard (`deletionGuardFraction` of live items) through. */
   allowDeletions?: boolean;
+  /** Allow a state that holds no items, live or deleted: the very first import only. */
+  firstRun?: boolean;
   /** Defaults to `YYYYMMDDTHHMMSSZ` (UTC), plus `-pilot` for a pilot build. */
   runId?: string;
   /** The header event; when absent it is read from `cfg.headerRelay`. Tests inject it. */
@@ -90,6 +92,21 @@ function headerRelayUrl(cfg: Config): string {
   const url = cfg.relays[cfg.headerRelay];
   if (url === undefined) throw new Error(`headerRelay "${cfg.headerRelay}" is not one of the relays`);
   return url;
+}
+
+/**
+ * State is the only record of what was published. A lost or replaced state file reads as empty,
+ * and a build on it would publish every place again as new and never delete the old versions.
+ * So an empty state is refused unless the caller says this is the very first import.
+ */
+function checkFirstRun(cfg: Config, state: State, firstRun: boolean): void {
+  const { live, deleted } = state.counts();
+  if (live + deleted > 0 || firstRun) return;
+  throw new Error(
+    `state ${cfg.paths.state} holds no items, live or deleted. If anything was published before, the ` +
+      "state file was lost or replaced, and this build would publish every place again; restore it " +
+      "from a backup (see README, Backups). For the very first import, run build again with --first-run",
+  );
 }
 
 /**
@@ -217,7 +234,8 @@ function renderReport(r: ReportInput): string {
  * items, applies the filter and pilot, diffs against state and writes
  * `<paths.out>/<runId>/{unsigned.jsonl,manifest.json,report.md}`. Only a full build (no filter,
  * no pilot) looks for deletions, and more of them than the guard allows abort the build unless
- * `allowDeletions` is set. Nothing is written when it throws.
+ * `allowDeletions` is set. A state with no items at all is refused unless `firstRun` is set
+ * (checkFirstRun). Nothing is written when it throws.
  */
 export async function build(cfg: Config, state: State, opts: BuildOptions = {}): Promise<BuildResult> {
   checkGuard(cfg);
@@ -233,6 +251,8 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
   if (cachePath === null) {
     throw new Error(`no cache in ${join(cfg.paths.data, "cache")}; run npm run fetch first`);
   }
+
+  checkFirstRun(cfg, state, opts.firstRun ?? false);
 
   const header = opts.header ?? (await fetchHeader(headerRelayUrl(cfg), cfg.headerCoordinate));
   checkHeader(header, cfg.headerCoordinate);

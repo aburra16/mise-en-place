@@ -43,6 +43,16 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--filter", "country=US", "--filter", "country=CA"])).toThrow(/twice/);
   });
 
+  it("takes --first-run as a flag", () => {
+    expect(parseArgs(["--first-run", "--pilot"])).toEqual({
+      positional: [],
+      pilot: "default",
+      allowDeletions: false,
+      firstRun: true,
+    });
+    expect(parseArgs([]).firstRun).toBeUndefined();
+  });
+
   it("splits --relays on commas", () => {
     expect(parseArgs(["--relays", "dcosl, search"]).relays).toEqual(["dcosl", "search"]);
     expect(() => parseArgs(["--relays"])).toThrow(/--relays/);
@@ -150,6 +160,25 @@ describe("cli", () => {
     const res = cliWith({ deletionGuardFraction: undefined }, "build");
     expect(res.status).not.toBe(0);
     expect(res.stderr).toMatch(/deletionGuardFraction must be/);
+  });
+
+  it("build on an empty state stops without --first-run, before touching the network", () => {
+    const place15 = JSON.parse(readFileSync("tests/fixtures/place-15.json", "utf8")) as unknown;
+    mkdirSync(join(dir, "data", "cache"), { recursive: true });
+    writeFileSync(join(dir, "data", "cache", "places-2026-10-05.json"), JSON.stringify([place15]));
+    const res = cli("build", "--pilot");
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toMatch(/^build: state .*state\.sqlite holds no items, live or deleted/);
+    expect(res.stderr).toMatch(/--first-run/);
+    expect(existsSync(join(dir, "out"))).toBe(false);
+  });
+
+  it("only build takes --first-run", () => {
+    for (const command of ["census", "sign", "publish", "verify"]) {
+      const res = cli(command, "--first-run");
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain(`${command} does not take --first-run`);
+    }
   });
 
   it("build stops without a cache before touching the network", () => {

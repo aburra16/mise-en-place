@@ -7,6 +7,8 @@ export interface CliArgs {
   filter?: Record<string, string>;
   /** `--allow-deletions` */
   allowDeletions: boolean;
+  /** `--first-run`: lets `build` run on a state that holds no items. */
+  firstRun?: true;
   /** `--relays a,b` */
   relays?: string[];
   /** `--port N`, 0 to 65535 (0 lets the OS choose). */
@@ -19,13 +21,15 @@ export function givenOptions(args: CliArgs): string[] {
   if (args.pilot !== undefined) given.push("--pilot");
   if (args.filter !== undefined) given.push("--filter");
   if (args.allowDeletions) given.push("--allow-deletions");
+  if (args.firstRun) given.push("--first-run");
   if (args.relays !== undefined) given.push("--relays");
   if (args.port !== undefined) given.push("--port");
   return given;
 }
 
 /**
- * Parses `--pilot [N]`, `--filter key=value`, `--allow-deletions`, `--relays a,b` and `--port N`.
+ * Parses `--pilot [N]`, `--filter key=value`, `--allow-deletions`, `--first-run`, `--relays a,b`
+ * and `--port N`.
  * Anything else starting with `-` is refused; the rest is positional.
  */
 export function parseArgs(argv: string[]): CliArgs {
@@ -60,6 +64,9 @@ export function parseArgs(argv: string[]): CliArgs {
       }
       case "--allow-deletions":
         args.allowDeletions = true;
+        break;
+      case "--first-run":
+        args.firstRun = true;
         break;
       case "--relays": {
         const names = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter((s) => s !== "");

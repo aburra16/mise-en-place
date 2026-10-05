@@ -48,7 +48,7 @@ const commands = new Map<string, Command>([
   [
     "build",
     async (args) => {
-      only("build", args, ["--pilot", "--filter", "--allow-deletions"]);
+      only("build", args, ["--pilot", "--filter", "--allow-deletions", "--first-run"]);
       const cfg = loadConfig();
       const state = openState(cfg.paths.state);
       try {
@@ -56,6 +56,7 @@ const commands = new Map<string, Command>([
           pilot: args.pilot === "default" ? cfg.pilotSize : args.pilot,
           filter: args.filter,
           allowDeletions: args.allowDeletions,
+          firstRun: args.firstRun,
         });
         const skipped = Object.entries(r.skipped).map(([k, v]) => `${k} ${v}`).join(", ");
         console.log(`wrote ${r.runDir}`);
