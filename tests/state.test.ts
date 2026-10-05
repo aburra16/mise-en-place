@@ -112,6 +112,15 @@ describe("events", () => {
     expect(state.acceptedOn("never-seen", DCOSL)).toBe(false);
   });
 
+  it("acceptedAnywhere is true once any relay has accepted the event", () => {
+    state.recordResult(result({ eventId: "e1", relay: SEARCH, ok: false, message: "pending" }));
+    expect(state.acceptedAnywhere("e1")).toBe(false);
+
+    state.recordResult(result({ eventId: "e1", relay: DCOSL, ok: true }));
+    expect(state.acceptedAnywhere("e1")).toBe(true);
+    expect(state.acceptedAnywhere("never-seen")).toBe(false);
+  });
+
   it("recording the same event and relay again updates ok instead of adding a row", () => {
     state.recordResult(result({ eventId: "e1", relay: DCOSL, ok: false, message: "timeout", runId: "run-1" }));
     state.recordResult(result({ eventId: "e1", relay: DCOSL, ok: true, message: "", runId: "run-2" }));

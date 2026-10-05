@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as nip19 from "nostr-tools/nip19";
 import * as nip49 from "nostr-tools/nip49";
-import { generateSecretKey, getPublicKey, verifyEvent, type Event } from "nostr-tools/pure";
+import { finalizeEvent, generateSecretKey, getPublicKey, verifyEvent, type Event } from "nostr-tools/pure";
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../src/args.js";
@@ -231,6 +231,77 @@ describe("cli", () => {
       const res = signCli("run1");
       expect(res.status).not.toBe(0);
       expect(res.stderr).toMatch(/MISE_KEY_FILE/);
+    });
+  });
+
+  describe("publish, verify and header:rebroadcast", () => {
+    const secret = generateSecretKey();
+    const pubkey = getPublicKey(secret);
+    const runDir = () => join(dir, "out", "run1");
+
+    /** A signed run of one item by `secret`, which the config names as the curator. */
+    function signedRun() {
+      mkdirSync(runDir(), { recursive: true });
+      const ev = finalizeEvent({ kind: 39999, created_at: 1_700_000_000, content: "", tags: [["d", "osm-node-1"]] }, secret);
+      writeFileSync(join(runDir(), "signed.jsonl"), `${JSON.stringify(ev)}\n`);
+    }
+
+    const run = (...args: string[]) => cliWith({ curatorPubkey: pubkey }, ...args);
+
+    it("are listed in the usage line", () => {
+      expect(cli().stderr).toMatch(/usage: .*publish.*verify.*header:rebroadcast/);
+    });
+
+    it("publish needs exactly one run id and takes only --relays", () => {
+      for (const args of [[], ["run1", "run2"]]) {
+        const res = run("publish", ...args);
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toMatch(/usage: npm run publish -- <runId> \[--relays a,b\]/);
+      }
+      const res = run("publish", "run1", "--pilot");
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/publish does not take --pilot/);
+    });
+
+    it("publish refuses a relay name the config does not have", () => {
+      signedRun();
+      const res = run("publish", "run1", "--relays", "dcosl,nope");
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/unknown relay "nope"/);
+    });
+
+    it("publish reports a relay it cannot reach and exits non-zero", () => {
+      signedRun();
+      const res = run("publish", "run1", "--relays", "dcosl");
+      expect(res.status).not.toBe(0);
+      expect(res.stdout).toMatch(/^dcosl: sent 0, ok 0, failed 0, skipped 0; cannot connect to ws:\/\/127\.0\.0\.1:9/);
+      expect(res.stderr).toMatch(/publish: .*dcosl/);
+    });
+
+    it("publish refuses a run signed by someone else before connecting", () => {
+      signedRun();
+      const res = cliWith({ curatorPubkey: "b".repeat(64) }, "publish", "run1");
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/signed\.jsonl line 1: signed by [0-9a-f]{64}, not the curator/);
+      expect(res.stdout).toBe("");
+    });
+
+    it("verify takes no arguments and reports a relay it cannot reach", () => {
+      expect(run("verify", "run1").stderr).toMatch(/verify takes no arguments/);
+      const res = run("verify");
+      expect(res.status).not.toBe(0);
+      expect(res.stdout).toMatch(/dcosl: cannot connect to ws:\/\/127\.0\.0\.1:9/);
+    });
+
+    it("header:rebroadcast needs one known relay name", () => {
+      for (const args of [[], ["search", "dcosl"]]) {
+        const res = run("header:rebroadcast", ...args);
+        expect(res.status).not.toBe(0);
+        expect(res.stderr).toMatch(/usage: npm run header:rebroadcast -- <relayName>/);
+      }
+      const res = run("header:rebroadcast", "nope");
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/unknown relay "nope"/);
     });
   });
 });

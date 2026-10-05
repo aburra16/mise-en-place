@@ -1,6 +1,6 @@
 import type { AbstractRelay } from "nostr-tools/abstract-relay";
 import type { NostrEvent } from "nostr-tools/core";
-import { connectRelay } from "./relay.js";
+import { connectRelay, newer, query } from "./relay.js";
 
 const HEADER_KIND = 39998;
 /** The fields every item this tool builds carries; the header must require exactly these. */
@@ -18,13 +18,6 @@ function parseCoordinate(coordinate: string): { kind: number; pubkey: string; d:
   return { kind, pubkey: coordinate.slice(first + 1, second), d: coordinate.slice(second + 1) };
 }
 
-/** Of two versions of a replaceable event, the newer; on a tie, the lower id (NIP-01). */
-function newer(a: NostrEvent, b: NostrEvent | null): NostrEvent {
-  if (b === null || a.created_at > b.created_at) return a;
-  if (a.created_at === b.created_at && a.id < b.id) return a;
-  return b;
-}
-
 /**
  * Reads the header at `coordinate` from one relay: the newest matching event, or null when
  * the relay has none. Throws if the relay cannot be reached or does not answer within
@@ -36,47 +29,15 @@ export async function fetchHeader(
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<NostrEvent | null> {
   const { kind, pubkey, d } = parseCoordinate(coordinate);
-  let relay: AbstractRelay;
+  let relay: AbstractRelay | undefined;
   try {
     relay = await connectRelay(relayUrl, timeoutMs);
+    const found = await query(relay, { kinds: [kind], authors: [pubkey], "#d": [d] }, timeoutMs);
+    return found.reduce<NostrEvent | null>((best, ev) => newer(ev, best), null);
   } catch (err) {
     throw new Error(`cannot read the header: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  try {
-    return await new Promise<NostrEvent | null>((resolve, reject) => {
-      let found: NostrEvent | null = null;
-      let settled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const finish = (fn: () => void) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        fn();
-      };
-      const sub = relay.subscribe([{ kinds: [kind], authors: [pubkey], "#d": [d] }], {
-        // Longer than our own timer, so the library never reports a silent relay as EOSE.
-        eoseTimeout: timeoutMs + 5_000,
-        onevent: (ev) => {
-          found = newer(ev, found);
-        },
-        oneose: () => {
-          finish(() => resolve(found));
-          sub.close();
-        },
-        onclose: (reason) => {
-          finish(() => reject(new Error(`${relayUrl} closed the header read: ${reason}`)));
-        },
-      });
-      if (settled) return;
-      timer = setTimeout(() => {
-        finish(() =>
-          reject(new Error(`${relayUrl} did not answer the header read within ${timeoutMs / 1000} s`)),
-        );
-        sub.close();
-      }, timeoutMs);
-    });
   } finally {
-    relay.close();
+    relay?.close();
   }
 }
 

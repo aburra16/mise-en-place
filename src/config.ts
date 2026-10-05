@@ -137,3 +137,12 @@ export function headerAuthor(coordinate: string): string {
   if (!pubkey) throw new Error(`not an address coordinate: ${coordinate}`);
   return pubkey;
 }
+
+/** The URL of the relay called `name`, or an error that lists the configured names. */
+export function relayUrl(cfg: Pick<Config, "relays">, name: string): string {
+  const url = Object.hasOwn(cfg.relays, name) ? cfg.relays[name] : undefined;
+  if (url === undefined) {
+    throw new Error(`unknown relay "${name}"; the relays are ${Object.keys(cfg.relays).join(", ")}`);
+  }
+  return url;
+}

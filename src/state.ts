@@ -14,6 +14,8 @@ export interface State {
   /** Every kind-39999 event id ever recorded for `d`, on any relay, ok or not. Oldest first. */
   versionsOf(d: string): string[];
   acceptedOn(eventId: string, relay: string): boolean;
+  /** True once any relay has accepted `eventId`: publish acts on an event's first OK only. */
+  acceptedAnywhere(eventId: string): boolean;
   recordResult(r: {
     eventId: string;
     d: string;
@@ -85,6 +87,7 @@ export function openState(path: string): State {
   const selectAccepted = db.prepare(
     "SELECT 1 FROM events WHERE event_id = ? AND relay = ? AND ok = 1",
   );
+  const selectAcceptedAnywhere = db.prepare("SELECT 1 FROM events WHERE event_id = ? AND ok = 1 LIMIT 1");
   const upsertEvent = db.prepare(
     `INSERT INTO events (event_id, d, kind, created_at, run_id, relay, ok, message)
      VALUES (@eventId, @d, @kind, @createdAt, @runId, @relay, @ok, @message)
@@ -120,6 +123,9 @@ export function openState(path: string): State {
     },
     acceptedOn(eventId, relay) {
       return selectAccepted.get(eventId, relay) !== undefined;
+    },
+    acceptedAnywhere(eventId) {
+      return selectAcceptedAnywhere.get(eventId) !== undefined;
     },
     recordResult(r) {
       upsertEvent.run({ ...r, ok: r.ok ? 1 : 0 });
