@@ -775,6 +775,22 @@ describe("the page", () => {
     expect(js).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/);
   });
 
+  it("breaks only code (the d and id columns) mid-word; other cells wrap at spaces and the table scrolls", () => {
+    /** The declarations of the first rule whose selector list is exactly `selector`. */
+    const rule = (selector: string) => {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/,\s*/g, ",\\s*");
+      return css.match(new RegExp(`(?:^|\\n)${escaped}\\s*{([^}]*)}`))?.[1];
+    };
+    const cells = rule("th, td");
+    expect(cells).toBeDefined();
+    expect(cells).not.toMatch(/overflow-wrap:\s*anywhere|word-break:\s*break-(all|word)/);
+    expect(cells).toMatch(/overflow-wrap:\s*normal/);
+    expect(rule("td code")).toMatch(/overflow-wrap:\s*anywhere/);
+    expect(rule(".scroll")).toMatch(/overflow-x:\s*auto/);
+    expect(html).toMatch(/<div class="scroll">\s*<table id="items-table">/);
+    expect(js).toMatch(/td\(detailLink\(item\.d, h\("code", null, item\.d\)\)\)/);
+  });
+
   it("styles with custom properties, for light and dark, and has a narrow-screen rule", () => {
     expect(css).toMatch(/:root\s*{[^}]*--bg:/);
     expect(css).toMatch(/@media \(prefers-color-scheme: dark\)\s*{\s*:root\s*{[^}]*--bg:/);

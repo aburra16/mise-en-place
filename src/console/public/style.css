@@ -267,12 +267,20 @@ table {
   font-size: 0.9rem;
 }
 
+/* Words in a cell wrap at spaces only: when the cells cannot fit, the .scroll wrapper scrolls
+   instead of breaking "restaurant" across lines. */
 th,
 td {
   padding: 0.4rem 0.6rem;
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* The d and event id columns are long tokens with no spaces; only they may break anywhere. */
+td code {
   overflow-wrap: anywhere;
 }
 
