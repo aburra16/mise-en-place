@@ -152,7 +152,7 @@ BTC Map API ──fetch──▶ data/cache/places-<date>.json   (raw, never edi
   - publishes deletions last in a run.
 - **`verify.ts`:** reads back from each relay with `{"kinds":[39999],"authors":[curator],"#z":[coord]}`, paginating with `until`. It compares counts and ids with state and lists anything missing or extra.
 - **`state.ts`:** SQLite with two tables:
-  - `items(d, status, content_hash, latest_event_id, first_seen, last_changed)`;
+  - `items(d, status, content_hash, tags_json, latest_event_id, first_seen, last_changed)` (`tags_json` lets the console show fields without a relay read);
   - `events(event_id, d, kind, created_at, run_id, relay, ok, message)`.
 - **`console/`:** a localhost-only web server with read-only JSON endpoints over state, the latest cache and live relay reads, plus a static page (§ 8).
 
@@ -162,7 +162,7 @@ BTC Map API ──fetch──▶ data/cache/places-<date>.json   (raw, never edi
 |---|---|---|---|
 | `npm run fetch` | Write today's cache file | BTC Map | no |
 | `npm run census` | Category counts, in-scope total, field coverage, skips with reasons, 20 sample items | none | no |
-| `npm run build -- [--pilot] [--limit N] [--filter country=US]` | Write `unsigned.jsonl` (new and changed items, then deletions) and `report.md` | none | no |
+| `npm run build -- [--pilot [N]] [--filter country=US] [--allow-deletions]` | Check the header, then write `unsigned.jsonl` (new and changed items, then deletions) and `report.md`. A filtered or pilot build never emits deletions. | header read from dcosl | no |
 | `npm run sign -- <run>` | Write `signed.jsonl` | none | yes |
 | `npm run publish -- <run> [--relays dcosl,search]` | Publish and record | relays | no |
 | `npm run verify` | Read back and compare | relays | no |
