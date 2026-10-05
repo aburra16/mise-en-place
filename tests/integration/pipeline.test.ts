@@ -239,7 +239,7 @@ describe("pipeline against nak serve", () => {
     expect(versions).toHaveLength(2);
 
     const without = PLACES.filter((_, i) => i !== 2);
-    const third = await buildAndSign(without, "r3", { allowDeletions: true });
+    const third = await buildAndSign(without, "r3", { allowDeletions: 1 });
     expect(third.built.deletions).toBe(1);
     const deletion = third.events.find((e) => e.kind === 5)!;
     expect(deletion.tags.filter((t) => t[0] === "e").map((t) => t[1])).toEqual(versions);

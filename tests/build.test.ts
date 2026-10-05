@@ -216,8 +216,8 @@ describe("build", () => {
       "2026-10-06",
     );
 
-    // allowDeletions, so it is the hold and not the guard that keeps the item.
-    const result = await run({ runId: "r2", allowDeletions: true });
+    // allowDeletions 0 (the build must find nothing gone), so it is the hold that keeps the item.
+    const result = await run({ runId: "r2", allowDeletions: 0 });
 
     expect(result.deletions).toBe(0);
     expect(lines(result.runDir).filter((e) => e.kind === 5)).toEqual([]);
@@ -245,7 +245,7 @@ describe("build", () => {
     state.markLive("osm-node-555", contentHash(named), JSON.stringify(named), "v1", 1);
     state.markLive("osm-node-556", "hash", "[]", "v2", 1);
 
-    const result = await run({ runId: "r1", allowDeletions: true });
+    const result = await run({ runId: "r1", allowDeletions: 2 });
 
     const report = readFileSync(join(result.runDir, "report.md"), "utf8");
     const section = report.slice(report.indexOf("## Deletions"));
@@ -262,7 +262,7 @@ describe("build", () => {
       state.markLive(d, contentHash(tags), JSON.stringify(tags), `ev-${d}`, 1);
     }
 
-    const result = await run({ runId: "r1", allowDeletions: true });
+    const result = await run({ runId: "r1", allowDeletions: 1 });
 
     const report = readFileSync(join(result.runDir, "report.md"), "utf8");
     const deletions = report.slice(report.indexOf("## Deletions"), report.indexOf("## Held"));
@@ -281,7 +281,7 @@ describe("build", () => {
     }
     state.markLive(goneD, "hash", "[]", "v2", 200);
 
-    const result = await run({ runId: "r1", allowDeletions: true });
+    const result = await run({ runId: "r1", allowDeletions: 1 });
 
     const events = lines(result.runDir);
     expect(result.deletions).toBe(1);
@@ -307,7 +307,7 @@ describe("build", () => {
     state.markLive("osm-node-555", "hash", "[]", "v3", 300);
     state.markLive("osm-node-556", "hash", "[]", "only", 300);
 
-    const result = await run({ runId: "r1", allowDeletions: true });
+    const result = await run({ runId: "r1", allowDeletions: 2 });
 
     const deletions = lines(result.runDir).filter((e) => e.kind === 5);
     expect(deletions.map((e) => e.tags.filter((t) => t[0] === "e"))).toEqual([
@@ -320,7 +320,7 @@ describe("build", () => {
     writeCache(FIXTURE);
     state.markLive("osm-node-9", "h", "[]", "e9", 1);
     state.markLive("osm-node-8", "h", "[]", "e8", 1);
-    const result = await run({ runId: "r1", allowDeletions: true });
+    const result = await run({ runId: "r1", allowDeletions: 2 });
     const kinds = lines(result.runDir).map((e) => e.kind);
     expect(kinds).toEqual([39999, 39999, 39999, 39999, 5, 5]);
     const deletedA = lines(result.runDir)
@@ -332,29 +332,200 @@ describe("build", () => {
     ]);
   });
 
-  it("deletions over the guard abort", async () => {
-    const all = restaurants(100);
-    writeCache(all);
-    publishAll((await run({ runId: "r1" })).runDir);
-    expect(state.liveItems().size).toBe(100);
+  describe("--allow-deletions=N", () => {
+    /** 100 published restaurants, then a cache that drops the first `n` of them. */
+    async function dropped(n: number): Promise<RawPlace[]> {
+      const all = restaurants(100);
+      writeCache(all);
+      publishAll((await run({ runId: "r1" })).runDir);
+      expect(state.liveItems().size).toBe(100);
+      const remaining = all.slice(n);
+      writeCache(remaining, "2026-10-06");
+      return remaining;
+    }
 
-    writeCache(all.slice(3), "2026-10-06");
-    await expect(run({ runId: "r2" })).rejects.toThrow(/allow-deletions/);
-    expect(existsSync(join(cfg.paths.out, "r2"))).toBe(false);
+    /** The names of what is in `out`: the run dirs and anything else build left there. */
+    const outEntries = () => readdirSync(cfg.paths.out).sort();
+    const refusedFiles = () => outEntries().filter((n) => /^refused-\d{8}T\d{6}Z\.md$/.test(n));
 
-    const allowed = await run({ runId: "r3", allowDeletions: true });
-    expect(allowed.deletions).toBe(3);
-    expect(lines(allowed.runDir).filter((e) => e.kind === 5)).toHaveLength(3);
-  });
+    it("refuses deletions over the guard without the flag, states the count and the exact flag", async () => {
+      await dropped(3);
 
-  it("allows deletions up to the guard without the flag", async () => {
-    const all = restaurants(100);
-    writeCache(all);
-    publishAll((await run({ runId: "r1" })).runDir);
+      const refusal = run({ runId: "r2" });
 
-    writeCache(all.slice(2), "2026-10-06");
-    const result = await run({ runId: "r2" });
-    expect(result.deletions).toBe(2);
+      await expect(refusal).rejects.toThrow(/would delete 3 of 100 live items, more than 2%/);
+      await expect(refusal).rejects.toThrow(/rerun with --allow-deletions=3 only if/);
+      expect(existsSync(join(cfg.paths.out, "r2"))).toBe(false);
+    });
+
+    it("builds over the guard when N equals the gone count", async () => {
+      await dropped(3);
+
+      const allowed = await run({ runId: "r2", allowDeletions: 3 });
+
+      expect(allowed.deletions).toBe(3);
+      expect(lines(allowed.runDir).filter((e) => e.kind === 5)).toHaveLength(3);
+    });
+
+    it("refuses over the guard when N is not the gone count, and names the actual one", async () => {
+      await dropped(3);
+
+      for (const wrong of [2, 4, 0, 100]) {
+        const refusal = run({ runId: "r2", allowDeletions: wrong });
+        await expect(refusal, `N=${wrong}`).rejects.toThrow(
+          new RegExp(`--allow-deletions=${wrong} does not match: build would delete 3 of 100 live items`),
+        );
+        await expect(refusal).rejects.toThrow(/rerun with --allow-deletions=3 only if/);
+      }
+      expect(existsSync(join(cfg.paths.out, "r2"))).toBe(false);
+    });
+
+    it("refuses when N is not the gone count even though the guard would not have tripped", async () => {
+      await dropped(2); // 2 of 100 is exactly the guard, so no flag is needed
+
+      const refusal = run({ runId: "r2", allowDeletions: 5 });
+
+      await expect(refusal).rejects.toThrow(/--allow-deletions=5 does not match: build would delete 2 of 100 live items/);
+      await expect(refusal).rejects.toThrow(/within the 2% guard/);
+      await expect(refusal).rejects.toThrow(/--allow-deletions=2/);
+      expect(existsSync(join(cfg.paths.out, "r2"))).toBe(false);
+    });
+
+    it("builds within the guard when N equals the gone count, and still without the flag", async () => {
+      await dropped(2);
+
+      expect((await run({ runId: "r2", allowDeletions: 2 })).deletions).toBe(2);
+      expect((await run({ runId: "r3" })).deletions).toBe(2);
+    });
+
+    it("takes 0 as 'expect nothing gone': it builds when nothing is, and refuses when something is", async () => {
+      const remaining = await dropped(0);
+      expect((await run({ runId: "r2", allowDeletions: 0 })).deletions).toBe(0);
+
+      writeCache(remaining.slice(1), "2026-10-07");
+      await expect(run({ runId: "r3", allowDeletions: 0 })).rejects.toThrow(
+        /--allow-deletions=0 does not match: build would delete 1 of 100 live items/,
+      );
+    });
+
+    it("refuses N above 0 when nothing is gone, and says so", async () => {
+      await dropped(0);
+
+      await expect(run({ runId: "r2", allowDeletions: 4 })).rejects.toThrow(
+        /--allow-deletions=4 does not match: build would delete 0 of 100 live items; rerun without --allow-deletions/,
+      );
+    });
+
+    it("refuses N above 0 on a pilot or filtered build, which looks for no deletions", async () => {
+      writeCache(FIXTURE);
+      state.markLive("osm-node-424242", "hash", "[]", "ev-gone", 1);
+
+      await expect(run({ runId: "r1", pilot: 2, allowDeletions: 1 })).rejects.toThrow(
+        /--allow-deletions=1 does not match: .*pilot or filtered build looks for no deletions/,
+      );
+      await expect(run({ runId: "r2", filter: { country: "US" }, allowDeletions: 1 })).rejects.toThrow(
+        /pilot or filtered build looks for no deletions/,
+      );
+      expect(existsSync(cfg.paths.out)).toBe(false);
+    });
+
+    it("refuses an N that is not a whole number of at least 0", async () => {
+      writeCache(FIXTURE);
+      for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await expect(run({ runId: "r1", allowDeletions: bad }), String(bad)).rejects.toThrow(/allowDeletions/);
+      }
+      expect(existsSync(cfg.paths.out)).toBe(false);
+    });
+
+    it("records the count in the manifest and the report, and null when the flag is absent", async () => {
+      await dropped(3);
+
+      const withFlag = await run({ runId: "r2", allowDeletions: 3 });
+      const manifest = JSON.parse(readFileSync(join(withFlag.runDir, "manifest.json"), "utf8")) as {
+        options: { allowDeletions: number | null };
+      };
+      expect(manifest.options.allowDeletions).toBe(3);
+      expect(readFileSync(join(withFlag.runDir, "report.md"), "utf8")).toContain(
+        "- Deletions: looked for; --allow-deletions=3 given",
+      );
+
+      const without = await run({ runId: "r3", pilot: 5 });
+      const plain = JSON.parse(readFileSync(join(without.runDir, "manifest.json"), "utf8")) as {
+        options: { allowDeletions: number | null };
+      };
+      expect(plain.options.allowDeletions).toBeNull();
+    });
+
+    describe("the refusal's list of gone items", () => {
+      /** Marks 100 named restaurants live, then drops the first `n` from the cache. */
+      async function namedAndDropped(n: number): Promise<void> {
+        const all = restaurants(100);
+        writeCache(all);
+        publishAll((await run({ runId: "r1" })).runDir);
+        writeCache(all.slice(n), "2026-10-06");
+      }
+
+      it("goes to <paths.out>/refused-<timestamp>.md, which the error message names, and no run dir appears", async () => {
+        await namedAndDropped(3);
+        const before = outEntries();
+
+        let message = "";
+        try {
+          await run({ runId: "r2" });
+        } catch (err) {
+          message = (err as Error).message;
+        }
+
+        expect(message).toMatch(/would delete 3 of 100/);
+        const files = refusedFiles();
+        expect(files).toHaveLength(1);
+        expect(message).toContain(`the 3 items it would delete, with their names, are listed in ${join(cfg.paths.out, files[0]!)}`);
+        expect(outEntries()).toEqual([...before, files[0]!].sort()); // the refused file, and no r2
+        expect(existsSync(join(cfg.paths.out, "r2"))).toBe(false);
+
+        const list = readFileSync(join(cfg.paths.out, files[0]!), "utf8");
+        for (const i of [0, 1, 2]) {
+          expect(list).toContain(`- \`osm-node-${1000 + i}\`: \`Place ${i}\``);
+        }
+        expect(list).not.toContain("osm-node-1003");
+        expect(list).toMatch(/would delete 3 of 100/);
+      });
+
+      it("is written for a count mismatch too, but not when nothing is gone", async () => {
+        await namedAndDropped(2);
+
+        await expect(run({ runId: "r2", allowDeletions: 5 })).rejects.toThrow(/listed in .*refused-/);
+        expect(readFileSync(join(cfg.paths.out, refusedFiles()[0]!), "utf8")).toContain("`osm-node-1001`: `Place 1`");
+
+        rmSync(join(cfg.paths.out, refusedFiles()[0]!));
+        writeCache(restaurants(100), "2026-10-09"); // everything is back: nothing gone
+        await expect(run({ runId: "r3", allowDeletions: 5 })).rejects.toThrow(/does not match/);
+        expect(refusedFiles()).toEqual([]);
+      });
+
+      it("shows an item with no recorded name as such, and keeps markdown in a name literal", async () => {
+        writeCache(restaurants(100));
+        state.markLive("osm-node-9001", "h", "[]", "e1", 1);
+        const starred: Tags = [["d", "osm-node-9002"], ["name", "*Star* _Bar_"]];
+        state.markLive("osm-node-9002", contentHash(starred), JSON.stringify(starred), "e2", 1);
+
+        await expect(run({ runId: "r1" })).rejects.toThrow(/listed in/);
+
+        const list = readFileSync(join(cfg.paths.out, refusedFiles()[0]!), "utf8");
+        expect(list).toContain("- `osm-node-9001`: (no name recorded)");
+        expect(list).toContain("- `osm-node-9002`: `*Star* _Bar_`");
+      });
+
+      it("does not hide the refusal if the list cannot be written", async () => {
+        await namedAndDropped(3);
+        rmSync(cfg.paths.out, { recursive: true });
+        writeFileSync(cfg.paths.out, "a file where the out directory should be");
+
+        await expect(run({ runId: "r2" })).rejects.toThrow(
+          /would delete 3 of 100 live items.*could not write the list of the 3 items/,
+        );
+      });
+    });
   });
 
   it("a pilot build selects n items and emits no deletions", async () => {
@@ -492,7 +663,7 @@ describe("build", () => {
       },
       cachePath,
       headerEventId: "1".repeat(64),
-      options: { pilot: 2, filter: { country: "US" }, allowDeletions: false },
+      options: { pilot: 2, filter: { country: "US" }, allowDeletions: null },
       counts: {
         created: 2,
         changed: 0,

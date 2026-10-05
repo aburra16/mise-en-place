@@ -18,8 +18,12 @@ export interface BuildOptions {
   pilot?: number;
   /** `country` and/or `category`, matched case-insensitively. Never emits deletions. */
   filter?: Record<string, string>;
-  /** Let deletions past the guard (`deletionGuardFraction` of live items) through. */
-  allowDeletions?: boolean;
+  /**
+   * `--allow-deletions=N`: "I expect exactly N deletions". Deletions past the guard
+   * (`deletionGuardFraction` of live items) go through only when N equals the number of items
+   * gone, and any other count is refused even within the guard. 0 means expect none.
+   */
+  allowDeletions?: number;
   /** Allow a state that holds no items, live or deleted: the very first import only. */
   firstRun?: boolean;
   /** Defaults to `YYYYMMDDTHHMMSSZ` (UTC), plus `-pilot` for a pilot build. */
@@ -73,6 +77,9 @@ function checkGuard(cfg: Config): void {
 function checkOptions(opts: BuildOptions): void {
   if (opts.pilot !== undefined && !(Number.isInteger(opts.pilot) && opts.pilot > 0)) {
     throw new Error(`pilot must be a positive integer, got ${opts.pilot}`);
+  }
+  if (opts.allowDeletions !== undefined && !(Number.isSafeInteger(opts.allowDeletions) && opts.allowDeletions >= 0)) {
+    throw new Error(`allowDeletions must be a whole number of at least 0, got ${opts.allowDeletions}`);
   }
   for (const [key, value] of Object.entries(opts.filter ?? {})) {
     if (!FILTER_KEYS.includes(key)) {
@@ -159,12 +166,65 @@ function liveLabel(d: string, item: LiveItem | undefined): string {
   return `${codeSpan(d)}: ${typeof name === "string" && name !== "" ? codeSpan(name) : "(no name recorded)"}`;
 }
 
+/**
+ * Why the deletions must not go through, or undefined when they may. With no `allowDeletions`
+ * the guard decides. With it, the count must match what is gone: the flag is a statement of
+ * what the human expects, so a different count is refused even within the guard.
+ */
+function deletionRefusal(
+  cfg: Config,
+  { allowDeletions, detectGone, gone, live }: { allowDeletions?: number; detectGone: boolean; gone: number; live: number },
+): string | undefined {
+  const tripped = gone > cfg.deletionGuardFraction * live;
+  if (allowDeletions === gone || (allowDeletions === undefined && !tripped)) return undefined;
+
+  const percent = Number((cfg.deletionGuardFraction * 100).toFixed(2));
+  const count = `build would delete ${gone} of ${live} live items`;
+  const exact = `rerun with --allow-deletions=${gone} only if the deletions are real`;
+  if (allowDeletions === undefined) {
+    return `${count}, more than ${percent}%; check the latest fetch, and ${exact}`;
+  }
+  const mismatch = `--allow-deletions=${allowDeletions} does not match: `;
+  if (!detectGone) {
+    return (
+      `${mismatch}a pilot or filtered build looks for no deletions, so it would delete none; ` +
+      "rerun without --allow-deletions"
+    );
+  }
+  if (gone === 0) return `${mismatch}${count}; rerun without --allow-deletions`;
+  if (tripped) return `${mismatch}${count}, more than ${percent}%; check the latest fetch, and ${exact}`;
+  return (
+    `${mismatch}${count}, within the ${percent}% guard; rerun without the flag, ` +
+    `or with --allow-deletions=${gone} if that is the count you expect`
+  );
+}
+
+/**
+ * Writes the d and name of every item the refused build would delete to
+ * `<paths.out>/refused-<timestamp>.md`, so the human can judge them before rerunning, and
+ * returns the sentence that tells the error's reader where it is. No run dir is made. A list
+ * that cannot be written is reported in the sentence instead: it must never hide the refusal.
+ */
+function writeRefusedList(cfg: Config, refusal: string, gone: string[], live: Map<string, LiveItem>): string {
+  if (gone.length === 0) return "";
+  const items = `${gone.length} item${gone.length === 1 ? "" : "s"}`;
+  const path = join(cfg.paths.out, `refused-${timestampId(new Date())}.md`);
+  try {
+    mkdirSync(cfg.paths.out, { recursive: true });
+    const text = ["# Refused build", "", refusal, "", "## Would delete", "", bullets(gone.map((d) => liveLabel(d, live.get(d)))), ""];
+    writeFileSync(path, text.join("\n"));
+  } catch (err) {
+    return `; could not write the list of the ${items} it would delete (${err instanceof Error ? err.message : String(err)})`;
+  }
+  return `; the ${items} it would delete, with their names, are listed in ${path}`;
+}
+
 function renderReport(r: ReportInput): string {
   const filter = Object.entries(r.filter).map(([k, v]) => `${k}=${v}`);
   const deletionNote = !r.detectGone
     ? "not looked for (filtered or pilot build)"
-    : r.opts.allowDeletions
-      ? "looked for; --allow-deletions given"
+    : r.opts.allowDeletions !== undefined
+      ? `looked for; --allow-deletions=${r.opts.allowDeletions} given`
       : "looked for";
   const eventCount = r.result.created + r.result.changed + r.result.deletions;
   return [
@@ -235,9 +295,12 @@ function renderReport(r: ReportInput): string {
  * Builds the next run from the latest cache: checks the header, builds and deduplicates the
  * items, applies the filter and pilot, diffs against state and writes
  * `<paths.out>/<runId>/{unsigned.jsonl,manifest.json,report.md}`. Only a full build (no filter,
- * no pilot) looks for deletions, and more of them than the guard allows abort the build unless
- * `allowDeletions` is set. A state with no items at all is refused unless `firstRun` is set
- * (checkFirstRun). Nothing is written when it throws.
+ * no pilot) looks for deletions. More of them than the guard allows abort the build unless
+ * `allowDeletions` equals the count gone, and a given `allowDeletions` that differs from the count
+ * aborts it even within the guard (deletionRefusal). A state with no items at all is refused
+ * unless `firstRun` is set (checkFirstRun). A run is written only on success: when it throws
+ * there is no run dir, but a deletion refusal also leaves `<paths.out>/refused-<timestamp>.md`
+ * listing the items it would have deleted (writeRefusedList).
  */
 export async function build(cfg: Config, state: State, opts: BuildOptions = {}): Promise<BuildResult> {
   checkGuard(cfg);
@@ -268,13 +331,13 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
 
   const live = state.liveItems();
   const diff = diffItems(built, live, { detectGone, held: catalog.held });
-  if (diff.gone.length > cfg.deletionGuardFraction * live.size && !opts.allowDeletions) {
-    throw new Error(
-      `build would delete ${diff.gone.length} of ${live.size} live items, more than ` +
-        `${Number((cfg.deletionGuardFraction * 100).toFixed(2))}%; check the latest fetch, and rerun with ` +
-        "--allow-deletions only if the deletions are real",
-    );
-  }
+  const refusal = deletionRefusal(cfg, {
+    allowDeletions: opts.allowDeletions,
+    detectGone,
+    gone: diff.gone.length,
+    live: live.size,
+  });
+  if (refusal !== undefined) throw new Error(`${refusal}${writeRefusedList(cfg, refusal, diff.gone, live)}`);
 
   // Every recorded version, plus the latest id in case a crash kept it out of the events table.
   const deletions = diff.gone.map((d) =>
@@ -304,7 +367,7 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
     options: {
       pilot: opts.pilot ?? null,
       filter: Object.keys(filter).length > 0 ? filter : null,
-      allowDeletions: opts.allowDeletions ?? false,
+      allowDeletions: opts.allowDeletions ?? null,
     },
     counts: {
       created: result.created,

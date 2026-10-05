@@ -4,7 +4,6 @@ Known, deliberately deferred items from the build of the importer (2026-10-05). 
 
 ## Before the full import
 
-- `build --allow-deletions` is a blanket switch. Bind it to the count (`--allow-deletions=N` must equal the gone count) so a habitual flag can't wave through a mass deletion caused by a source format change.
 - `report.md` reports changed items as a single count. Add per-tag change counts, which the console already computes as `changedFields`, so a BTC Map reformat that would republish thousands of items is visible before signing.
 - `build` does not warn about earlier runs that were built or signed but never published (for example, a pilot built but not published, followed by a full build).
 

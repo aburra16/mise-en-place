@@ -12,16 +12,17 @@ import { writeManifest } from "./run-manifest.js";
 
 describe("parseArgs", () => {
   it("defaults to no options", () => {
-    expect(parseArgs([])).toEqual({ positional: [], allowDeletions: false });
+    expect(parseArgs([])).toEqual({ positional: [] });
+    expect(parseArgs([]).allowDeletions).toBeUndefined();
   });
 
   it("takes --pilot with or without a size", () => {
     expect(parseArgs(["--pilot"]).pilot).toBe("default");
     expect(parseArgs(["--pilot", "20"]).pilot).toBe(20);
-    expect(parseArgs(["--pilot", "--allow-deletions"])).toEqual({
+    expect(parseArgs(["--pilot", "--allow-deletions=3"])).toEqual({
       positional: [],
       pilot: "default",
-      allowDeletions: true,
+      allowDeletions: 3,
     });
   });
 
@@ -43,11 +44,50 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--filter", "country=US", "--filter", "country=CA"])).toThrow(/twice/);
   });
 
+  describe("--allow-deletions", () => {
+    it("takes the count you expect as =N or as the next argument", () => {
+      expect(parseArgs(["--allow-deletions=120"]).allowDeletions).toBe(120);
+      expect(parseArgs(["--allow-deletions", "120"]).allowDeletions).toBe(120);
+      expect(parseArgs(["--allow-deletions", "7", "--pilot"])).toEqual({
+        positional: [],
+        allowDeletions: 7,
+        pilot: "default",
+      });
+      expect(parseArgs(["--allow-deletions=7", "out/r1"]).positional).toEqual(["out/r1"]);
+    });
+
+    it("accepts 0: build then refuses unless nothing is gone", () => {
+      expect(parseArgs(["--allow-deletions=0"]).allowDeletions).toBe(0);
+      expect(parseArgs(["--allow-deletions", "0"]).allowDeletions).toBe(0);
+    });
+
+    it("is a parse error without a number, and the message explains the new form", () => {
+      for (const argv of [
+        ["--allow-deletions"],
+        ["--allow-deletions", "--pilot"],
+        ["--allow-deletions", "out/r1"],
+        ["--allow-deletions="],
+        ["--allow-deletions=abc"],
+        ["--allow-deletions=-1"],
+        ["--allow-deletions=1.5"],
+        ["--allow-deletions=1e3"],
+        ["--allow-deletions=99999999999999999999"],
+      ]) {
+        expect(() => parseArgs(argv), argv.join(" ")).toThrow(
+          /--allow-deletions needs the number of deletions you expect.*--allow-deletions=<count>.*--allow-deletions <count>/,
+        );
+      }
+    });
+
+    it("refuses it given twice, so one count never silently replaces another", () => {
+      expect(() => parseArgs(["--allow-deletions=3", "--allow-deletions", "4"])).toThrow(/--allow-deletions given twice/);
+    });
+  });
+
   it("takes --first-run as a flag", () => {
     expect(parseArgs(["--first-run", "--pilot"])).toEqual({
       positional: [],
       pilot: "default",
-      allowDeletions: false,
       firstRun: true,
     });
     expect(parseArgs([]).firstRun).toBeUndefined();
@@ -179,6 +219,21 @@ describe("cli", () => {
       expect(res.status).not.toBe(0);
       expect(res.stderr).toContain(`${command} does not take --first-run`);
     }
+  });
+
+  it("only build takes --allow-deletions", () => {
+    for (const command of ["census", "sign", "publish", "verify"]) {
+      const res = cli(command, "--allow-deletions=3");
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain(`${command} does not take --allow-deletions`);
+    }
+  });
+
+  it("build with a bare --allow-deletions stops with the new form, before reading anything", () => {
+    const res = cli("build", "--allow-deletions");
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toMatch(/^build: --allow-deletions needs the number of deletions you expect/);
+    expect(existsSync(join(dir, "out"))).toBe(false);
   });
 
   it("build stops without a cache before touching the network", () => {

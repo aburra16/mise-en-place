@@ -5,8 +5,11 @@ export interface CliArgs {
   pilot?: number | "default";
   /** `--filter key=value`, repeatable with different keys. */
   filter?: Record<string, string>;
-  /** `--allow-deletions` */
-  allowDeletions: boolean;
+  /**
+   * `--allow-deletions=N` or `--allow-deletions N`: "I expect exactly N deletions". Absent is
+   * undefined; 0 is a real value (expect none), so test it against undefined, never for truth.
+   */
+  allowDeletions?: number;
   /** `--first-run`: lets `build` run on a state that holds no items. */
   firstRun?: true;
   /** `--relays a,b` */
@@ -15,12 +18,28 @@ export interface CliArgs {
   port?: number;
 }
 
+const ALLOW_DELETIONS = "--allow-deletions";
+const WHOLE_NUMBER = /^\d+$/;
+
+/** Sets `--allow-deletions` from `value`, which must be the count: a bare flag is refused. */
+function setAllowDeletions(args: CliArgs, value: string | undefined): void {
+  const count = value !== undefined && WHOLE_NUMBER.test(value) ? Number(value) : NaN;
+  if (!Number.isSafeInteger(count)) {
+    throw new Error(
+      `${ALLOW_DELETIONS} needs the number of deletions you expect, as ${ALLOW_DELETIONS}=<count> or ` +
+        `${ALLOW_DELETIONS} <count>, e.g. ${ALLOW_DELETIONS}=120; build refuses unless exactly that many items are gone`,
+    );
+  }
+  if (args.allowDeletions !== undefined) throw new Error(`${ALLOW_DELETIONS} given twice`);
+  args.allowDeletions = count;
+}
+
 /** The option names present in `args`, for a command to refuse the ones it does not take. */
 export function givenOptions(args: CliArgs): string[] {
   const given: string[] = [];
   if (args.pilot !== undefined) given.push("--pilot");
   if (args.filter !== undefined) given.push("--filter");
-  if (args.allowDeletions) given.push("--allow-deletions");
+  if (args.allowDeletions !== undefined) given.push("--allow-deletions");
   if (args.firstRun) given.push("--first-run");
   if (args.relays !== undefined) given.push("--relays");
   if (args.port !== undefined) given.push("--port");
@@ -28,14 +47,18 @@ export function givenOptions(args: CliArgs): string[] {
 }
 
 /**
- * Parses `--pilot [N]`, `--filter key=value`, `--allow-deletions`, `--first-run`, `--relays a,b`
- * and `--port N`.
+ * Parses `--pilot [N]`, `--filter key=value`, `--allow-deletions=N` (or `--allow-deletions N`),
+ * `--first-run`, `--relays a,b` and `--port N`.
  * Anything else starting with `-` is refused; the rest is positional.
  */
 export function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { positional: [], allowDeletions: false };
+  const args: CliArgs = { positional: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
+    if (arg.startsWith(`${ALLOW_DELETIONS}=`)) {
+      setAllowDeletions(args, arg.slice(ALLOW_DELETIONS.length + 1));
+      continue;
+    }
     switch (arg) {
       case "--pilot": {
         const next = argv[i + 1];
@@ -62,9 +85,12 @@ export function parseArgs(argv: string[]): CliArgs {
         args.filter[key] = value;
         break;
       }
-      case "--allow-deletions":
-        args.allowDeletions = true;
+      case ALLOW_DELETIONS: {
+        const next = argv[i + 1];
+        setAllowDeletions(args, next);
+        if (next !== undefined && WHOLE_NUMBER.test(next)) i++;
         break;
+      }
       case "--first-run":
         args.firstRun = true;
         break;

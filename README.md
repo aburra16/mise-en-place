@@ -130,11 +130,13 @@ fetch, build, review report.md, sign, publish, verify
 
 - Only changed places are republished. A place is changed when its item tags differ from the last published version (a hash of the tags; `created_at` is not part of it). Unchanged places are not touched.
 - A place that is no longer in the latest fetch, or no longer in scope, gets a kind 5 deletion. The deletion names every version of the item ever recorded, with one `e` tag per event id, plus the `a` tag and `["k","39999"]`.
-- The deletion guard: if the deletions would exceed 2% of live items, `build` aborts. This protects against a bad fetch. Check the fetch, and rerun with `--allow-deletions` only if the deletions are real.
+- The deletion guard: if the deletions would exceed 2% of live items, `build` aborts. This protects against a bad fetch or a change in the source format. The error states how many items are gone and the exact flag to pass, and writes every gone item with its name to `out/refused-<timestamp>.md` so you can judge them before rerunning. No run directory is made. Check the fetch and that list, then rerun with `--allow-deletions=<count>` only if the deletions are real.
 
   ```bash
-  npm run build -- --allow-deletions
+  npm run build -- --allow-deletions=120
   ```
+
+  The flag always carries a number, `--allow-deletions=N` or `--allow-deletions N`, and means "I expect exactly N deletions". `build` goes ahead only when exactly N items are gone. Any other count is refused, even one within the guard, because what you expected did not match what the fetch shows. A bare `--allow-deletions` is a parse error, and so is repeating it. `--allow-deletions=0` is allowed and means expect none. A pilot or filtered build looks for no deletions, so it refuses any N above 0.
 
 - A place whose record is present but malformed is held, not deleted. It is listed under "Held" in the report, and an item already live for it stays live.
 
