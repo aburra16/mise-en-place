@@ -263,4 +263,4 @@ The code is MIT; see `LICENSE`.
 
 | Date | Run | Created | Changed | Deleted | Relays | Notes |
 |---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — |
+| 2026-10-05 | 20261005T225258Z-pilot | 150 | 0 | 0 | dcosl | US pilot (`--first-run --pilot 150 --filter country=US`); verify clean on dcosl. Not yet on search. |

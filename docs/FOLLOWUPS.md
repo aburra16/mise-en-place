@@ -12,6 +12,8 @@ Known, deliberately deferred items from the build of the importer (2026-10-05). 
 
 - Do `t` values containing spaces (`fast food`, `san francisco`) match in NIP-50 search on `wss://search.brainstorm.world`? If not, hyphenate them in `deriveT`.
 - Does `verify`'s `#d` + `#z` batch read work on vespa-relay, and does the search relay accept kind 5? The tests used `nak serve` for both relays.
+- Search relay reads need `include:spam` (handled by `relayReadSearch`). Still unconfirmed: whether `include:spam` results come back newest first, which `verify`'s paging and stale checks assume. On 2026-10-05 the relay answered quickly, then stopped answering reads for a while; check again on the first `verify` there.
+- No test pins that a manifest written without `relayReadSearch` is accepted under a config that has it (true by reading `configIdentity`).
 
 ## Docs
 
