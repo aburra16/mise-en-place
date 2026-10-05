@@ -4,6 +4,24 @@ import type { Place } from "./place.js";
 
 export type Tags = string[][];
 
+/** The value of the first tag called `name`, or undefined if there is none. */
+export function tagValue(tags: Tags, name: string): string | undefined {
+  return tags.find((t) => t[0] === name)?.[1];
+}
+
+/**
+ * Orders items by `btcmap-id` as a number (9 before 10), falling back to text order for ids
+ * that are not numbers, so the order never depends on the input order.
+ */
+export function byBtcmapId(a: Tags, b: Tags): number {
+  const x = tagValue(a, "btcmap-id") ?? "";
+  const y = tagValue(b, "btcmap-id") ?? "";
+  const nx = Number(x);
+  const ny = Number(y);
+  if (x !== "" && y !== "" && Number.isFinite(nx) && Number.isFinite(ny) && nx !== ny) return nx - ny;
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
 /** The `d` tag for an OSM id: `node:1` becomes `osm-node-1`. */
 export function dTag(osmId: string): string {
   return `osm-${osmId.replaceAll(":", "-")}`;
