@@ -60,8 +60,11 @@ describe("cli", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  /** Runs the CLI with a temp config whose paths point into the temp dir. No network. */
-  function cli(...args: string[]) {
+  /**
+   * Runs the CLI with a temp config (config.json with relays on loopback, paths in the temp
+   * dir, then `overrides`). No network.
+   */
+  function cliWith(overrides: Record<string, unknown>, ...args: string[]) {
     const base = JSON.parse(readFileSync("config.json", "utf8")) as Record<string, unknown>;
     const configPath = join(dir, "config.json");
     writeFileSync(
@@ -70,6 +73,7 @@ describe("cli", () => {
         ...base,
         relays: { dcosl: "ws://127.0.0.1:9", search: "ws://127.0.0.1:9" },
         paths: { data: join(dir, "data"), out: join(dir, "out"), state: join(dir, "state.sqlite") },
+        ...overrides,
       }),
     );
     return spawnSync("node_modules/.bin/tsx", ["src/cli.ts", ...args], {
@@ -77,6 +81,8 @@ describe("cli", () => {
       env: { ...process.env, MISE_CONFIG: configPath },
     });
   }
+
+  const cli = (...args: string[]) => cliWith({}, ...args);
 
   it("exits non-zero with a usage line for an unknown command", () => {
     const res = cli("frobnicate");
@@ -104,6 +110,18 @@ describe("cli", () => {
     expect(res.stderr).toBe("");
     expect(res.status).toBe(0);
     expect(res.stdout).toContain("In scope: 1");
+  });
+
+  it("build --pilot with no pilotSize in the config stops instead of running a full build", () => {
+    const res = cliWith({ pilotSize: undefined }, "build", "--pilot");
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toMatch(/pilotSize must be a positive integer/);
+  });
+
+  it("build with no deletionGuardFraction in the config stops", () => {
+    const res = cliWith({ deletionGuardFraction: undefined }, "build");
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toMatch(/deletionGuardFraction must be/);
   });
 
   it("build stops without a cache before touching the network", () => {

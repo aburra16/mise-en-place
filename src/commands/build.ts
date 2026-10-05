@@ -10,7 +10,7 @@ import { tagValue, type Tags } from "../item.js";
 import { bullets, coverageTable, duplicateList, samples, table } from "../markdown.js";
 import { selectPilot } from "../pilot.js";
 import { latestCachePath, readCache } from "../source/btcmap.js";
-import type { State } from "../state.js";
+import type { LiveItem, State } from "../state.js";
 
 export interface BuildOptions {
   /** Build only this many items, chosen by `selectPilot`. Never emits deletions. */
@@ -34,6 +34,8 @@ export interface BuildResult {
   skipped: Record<string, number>;
   /** OSM ids that more than one BTC Map place carried; the lowest `btcmap-id` was kept. */
   duplicates: string[];
+  /** `d` of each malformed record that still names its place: never deleted, sorted. */
+  held: string[];
 }
 
 const ITEM_KIND = 39999;
@@ -43,6 +45,17 @@ const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** `2026-10-05T16:22:33.123Z` becomes `20261005T162233Z`. */
 function timestampId(now: Date): string {
   return now.toISOString().replace(/\.\d+Z$/, "Z").replace(/[-:]/g, "");
+}
+
+/**
+ * The guard must never fail open: `gone > NaN` is false, so a missing fraction would let
+ * every deletion through. loadConfig checks this too; build does not rely on it.
+ */
+function checkGuard(cfg: Config): void {
+  const f: unknown = cfg.deletionGuardFraction;
+  if (typeof f !== "number" || !Number.isFinite(f) || f < 0 || f > 1) {
+    throw new Error(`deletionGuardFraction must be a number from 0 to 1, got ${String(f)}`);
+  }
 }
 
 function checkOptions(opts: BuildOptions): void {
@@ -97,7 +110,23 @@ interface ReportInput {
   detectGone: boolean;
   catalog: Catalog;
   built: Map<string, Tags>;
+  live: Map<string, LiveItem>;
+  deletions: { d: string; eventIds: number }[];
   result: BuildResult;
+}
+
+/** The name in a live item's stored tags, for the report. */
+function liveName(item: LiveItem | undefined): string {
+  try {
+    const tags: unknown = JSON.parse(item?.tagsJson ?? "[]");
+    const name = Array.isArray(tags)
+      ? (tags as unknown[]).find((t): t is string[] => Array.isArray(t) && t[0] === "name")?.[1]
+      : undefined;
+    if (typeof name === "string" && name !== "") return name;
+  } catch {
+    // Unreadable tags read as no name; the d still identifies the item.
+  }
+  return "(no name recorded)";
 }
 
 function renderReport(r: ReportInput): string {
@@ -133,6 +162,23 @@ function renderReport(r: ReportInput): string {
     `\`unsigned.jsonl\` holds ${eventCount} events: created and changed items, then deletions. ` +
       "Unchanged items are not republished.",
     "",
+    "## Deletions",
+    "",
+    !r.detectGone
+      ? "not looked for (filtered or pilot build)"
+      : bullets(
+          r.deletions.map(
+            ({ d, eventIds }) =>
+              `${d}: ${liveName(r.live.get(d))} (${eventIds} event id${eventIds === 1 ? "" : "s"})`,
+          ),
+        ),
+    "",
+    "## Held",
+    "",
+    "Malformed records that still name their place. They are never deleted.",
+    "",
+    bullets(r.result.held.map((d) => (r.live.has(d) ? `${d}: ${liveName(r.live.get(d))} (live, kept)` : d))),
+    "",
     "## Skipped",
     "",
     table(["reason", "places"], Object.entries(r.result.skipped)),
@@ -164,6 +210,7 @@ function renderReport(r: ReportInput): string {
  * `allowDeletions` is set. Nothing is written when it throws.
  */
 export async function build(cfg: Config, state: State, opts: BuildOptions = {}): Promise<BuildResult> {
+  checkGuard(cfg);
   checkOptions(opts);
   const filter = opts.filter ?? {};
   const detectGone = Object.keys(filter).length === 0 && opts.pilot === undefined;
@@ -187,7 +234,7 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
   const built = new Map(chosen.map((tags) => [tagValue(tags, "d")!, tags]));
 
   const live = state.liveItems();
-  const diff = diffItems(built, live, { detectGone });
+  const diff = diffItems(built, live, { detectGone, held: catalog.held });
   if (diff.gone.length > cfg.deletionGuardFraction * live.size && !opts.allowDeletions) {
     throw new Error(
       `build would delete ${diff.gone.length} of ${live.size} live items, more than ` +
@@ -213,6 +260,7 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
     deletions: deletions.length,
     skipped: { ...catalog.skipped },
     duplicates: [...new Set(catalog.duplicates.map((x) => x.osmId))].sort(),
+    held: [...catalog.held].sort(),
   };
   const manifest = {
     runId,
@@ -230,11 +278,27 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
       deletions: result.deletions,
       skipped: result.skipped,
       duplicates: catalog.duplicates.length,
+      held: result.held.length,
     },
   };
 
   writeRun(runDir, [
-    ["report.md", renderReport({ runId, cachePath, header, opts, filter, detectGone, catalog, built, result })],
+    ["report.md", renderReport({
+        runId,
+        cachePath,
+        header,
+        opts,
+        filter,
+        detectGone,
+        catalog,
+        built,
+        live,
+        deletions: deletions.map((del, i) => ({
+          d: diff.gone[i]!,
+          eventIds: del.tags.filter((t) => t[0] === "e").length,
+        })),
+        result,
+      }),],
     ["manifest.json", `${JSON.stringify(manifest, null, 2)}\n`],
     ["unsigned.jsonl", events.map((e) => `${JSON.stringify(e)}\n`).join("")],
   ]);

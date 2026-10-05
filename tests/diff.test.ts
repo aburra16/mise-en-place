@@ -81,6 +81,16 @@ describe("diffItems", () => {
     expect(diff.unchanged).toBe(1);
   });
 
+  it("never calls a held d gone: its record is still in the fetch, only malformed", () => {
+    const kept = item("osm-node-1");
+    const diff = diffItems(
+      builtMap(kept),
+      liveMap(liveOf(kept), liveOf(item("osm-node-7")), liveOf(item("osm-node-9"))),
+      { detectGone: true, held: new Set(["osm-node-7"]) },
+    );
+    expect(diff.gone).toEqual(["osm-node-9"]);
+  });
+
   it("returns created and changed sorted by d, whatever the map order", () => {
     const c = [item("osm-node-3"), item("osm-node-1"), item("osm-node-2")];
     const ch = [item("osm-way-9", "new"), item("osm-way-1", "new")];

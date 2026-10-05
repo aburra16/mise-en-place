@@ -53,6 +53,7 @@ const commands = new Map<string, Command>([
         );
         console.log(`skipped: ${skipped}`);
         if (r.duplicates.length > 0) console.log(`duplicate osm ids: ${r.duplicates.join(", ")}`);
+        if (r.held.length > 0) console.log(`held (malformed, never deleted): ${r.held.join(", ")}`);
         console.log(`review ${r.runDir}/report.md before signing`);
       } finally {
         state.close();

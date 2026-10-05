@@ -23,12 +23,13 @@ export interface Diff {
 /**
  * Compares built items (keyed by `d`) with the live items in state. Only a build that saw
  * every place may call a live item gone, so a filtered or pilot build passes
- * `detectGone: false`.
+ * `detectGone: false`. A `held` d (its record is still in the fetch but could not be read) is
+ * never gone.
  */
 export function diffItems(
   built: Map<string, Tags>,
   live: Map<string, LiveItem>,
-  opts: { detectGone: boolean },
+  opts: { detectGone: boolean; held?: ReadonlySet<string> },
 ): Diff {
   const diff: Diff = { created: [], changed: [], unchanged: 0, gone: [] };
   for (const d of [...built.keys()].sort()) {
@@ -38,6 +39,8 @@ export function diffItems(
     else if (current.contentHash !== contentHash(tags)) diff.changed.push(tags);
     else diff.unchanged++;
   }
-  if (opts.detectGone) diff.gone = [...live.keys()].filter((d) => !built.has(d)).sort();
+  if (opts.detectGone) {
+    diff.gone = [...live.keys()].filter((d) => !built.has(d) && !opts.held?.has(d)).sort();
+  }
   return diff;
 }

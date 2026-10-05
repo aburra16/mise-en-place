@@ -204,6 +204,51 @@ describe("build", () => {
     expect(lines(second.runDir).map((e) => tag(e.tags, "name"))).toEqual(["Bean There Again"]);
   });
 
+  it("holds a live item whose record is still in the fetch but malformed: no deletion", async () => {
+    writeCache(FIXTURE);
+    publishAll((await run({ runId: "r1" })).runDir);
+    writeCache(
+      FIXTURE.map((p) => (p.id === 103 ? { ...p, lat: null } : p)),
+      "2026-10-06",
+    );
+
+    // allowDeletions, so it is the hold and not the guard that keeps the item.
+    const result = await run({ runId: "r2", allowDeletions: true });
+
+    expect(result.deletions).toBe(0);
+    expect(lines(result.runDir).filter((e) => e.kind === 5)).toEqual([]);
+    expect(result.skipped.malformed).toBe(1);
+    expect(result.held).toEqual(["osm-node-103"]);
+    const report = readFileSync(join(result.runDir, "report.md"), "utf8");
+    expect(report).toMatch(/## Held[\s\S]*osm-node-103/);
+  });
+
+  it("counts a malformed record without a readable osm_id as malformed only", async () => {
+    writeCache([
+      ...FIXTURE,
+      { id: 777, name: "No OSM id", lat: 1, lon: 1, "osm:amenity": "cafe" },
+      { id: 778, osm_id: "   ", name: "Blank OSM id", lat: 1, lon: 1, "osm:amenity": "cafe" },
+      { id: 779, osm_id: 779, name: "Numeric OSM id", lat: 1, lon: 1, "osm:amenity": "cafe" },
+    ]);
+    const result = await run({ runId: "r1" });
+    expect(result.skipped.malformed).toBe(3);
+    expect(result.held).toEqual([]);
+  });
+
+  it("lists every deletion in the report with the live item's name", async () => {
+    writeCache(FIXTURE);
+    const named: Tags = [["d", "osm-node-555"], ["name", "Old Diner"]];
+    state.markLive("osm-node-555", contentHash(named), JSON.stringify(named), "v1", 1);
+    state.markLive("osm-node-556", "hash", "[]", "v2", 1);
+
+    const result = await run({ runId: "r1", allowDeletions: true });
+
+    const report = readFileSync(join(result.runDir, "report.md"), "utf8");
+    const section = report.slice(report.indexOf("## Deletions"));
+    expect(section).toContain("osm-node-555: Old Diner");
+    expect(section).toContain("osm-node-556: (no name recorded)");
+  });
+
   it("a place missing from the cache becomes a kind-5 deletion with all its versions", async () => {
     writeCache(FIXTURE);
     const goneD = "osm-node-555";
@@ -305,6 +350,16 @@ describe("build", () => {
     writeCache(FIXTURE);
     await expect(run({ runId: "r1", pilot: 0 })).rejects.toThrow(/pilot/);
     await expect(run({ runId: "r2", pilot: 1.5 })).rejects.toThrow(/pilot/);
+    await expect(run({ runId: "r3", pilot: Number.NaN })).rejects.toThrow(/pilot/);
+  });
+
+  it("refuses a deletionGuardFraction that is not a finite number from 0 to 1", async () => {
+    writeCache(FIXTURE);
+    for (const bad of [Number.NaN, undefined, -0.1, 2, "0.02"]) {
+      cfg = { ...cfg, deletionGuardFraction: bad as number };
+      await expect(run({ runId: "r1" })).rejects.toThrow(/deletionGuardFraction/);
+    }
+    expect(existsSync(cfg.paths.out)).toBe(false);
   });
 
   it("skips a malformed record instead of aborting the run", async () => {
@@ -380,6 +435,7 @@ describe("build", () => {
         deletions: 0,
         skipped: { "out-of-scope": 1, malformed: 0 },
         duplicates: 1,
+        held: 0,
       },
     });
   });
