@@ -1,4 +1,4 @@
-import { relayUrl, type Config } from "../config.js";
+import { readSearch, relayUrl, type Config } from "../config.js";
 import { checkHeader, fetchHeader } from "../header.js";
 import { connectRelay, publishEvent } from "../relay.js";
 
@@ -15,7 +15,12 @@ export async function rebroadcastHeader(
   if (toRelay === cfg.headerRelay) {
     throw new Error(`${toRelay} is the header relay: the header is read from there, so there is nothing to copy`);
   }
-  const header = await fetchHeader(relayUrl(cfg, cfg.headerRelay), cfg.headerCoordinate);
+  const header = await fetchHeader(
+    relayUrl(cfg, cfg.headerRelay),
+    cfg.headerCoordinate,
+    undefined,
+    readSearch(cfg, cfg.headerRelay),
+  );
   checkHeader(header, cfg.headerCoordinate);
 
   const relay = await connectRelay(target, cfg.publish.okTimeoutMs);

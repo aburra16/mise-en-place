@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:f
 import { dirname, join } from "node:path";
 import type { NostrEvent } from "nostr-tools/core";
 import { buildCatalog, type Catalog } from "../catalog.js";
-import type { Config } from "../config.js";
+import { readSearch, type Config } from "../config.js";
 import { deletionFor, type Unsigned } from "../deletion.js";
 import { diffItems } from "../diff.js";
 import { checkHeader, fetchHeader } from "../header.js";
@@ -256,7 +256,9 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
 
   checkFirstRun(cfg, state, opts.firstRun ?? false);
 
-  const header = opts.header ?? (await fetchHeader(headerRelayUrl(cfg), cfg.headerCoordinate));
+  const header =
+    opts.header ??
+    (await fetchHeader(headerRelayUrl(cfg), cfg.headerCoordinate, undefined, readSearch(cfg, cfg.headerRelay)));
   checkHeader(header, cfg.headerCoordinate);
 
   const catalog = buildCatalog(readCache(cachePath), cfg);

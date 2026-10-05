@@ -7,6 +7,12 @@ export interface Config {
   relays: Record<string, string>;
   /** relay name used for the header read */
   headerRelay: string;
+  /**
+   * Optional, per relay name: the NIP-50 `search` string added to every REQ filter sent to that
+   * relay. The search relay refuses a plain REQ and answers one with `include:spam`. A read
+   * setting only: publishing sends no REQ, and it is not part of a run's config identity.
+   */
+  relayReadSearch?: Record<string, string>;
   scope: { amenity: string[]; shop: string[]; craft: string[] };
   btcmapFields: string[];
   publish: { eventsPerSecond: number; okTimeoutMs: number };
@@ -95,6 +101,20 @@ export function loadConfig(path?: string): Config {
     `one of the relay names (${Object.keys(relayMap).join(", ")})`,
   );
 
+  const searchMap = raw.relayReadSearch;
+  if (searchMap !== undefined) {
+    check("relayReadSearch", searchMap, isObject(searchMap), "an object mapping relay names to search strings");
+    for (const [name, search] of Object.entries(searchMap as Record<string, unknown>)) {
+      check(
+        `relayReadSearch.${name}`,
+        search,
+        Object.hasOwn(relayMap, name),
+        `keyed by one of the relay names (${Object.keys(relayMap).join(", ")})`,
+      );
+      check(`relayReadSearch.${name}`, search, typeof search === "string" && search.trim() !== "", "a non-empty string");
+    }
+  }
+
   check("scope", scope, isObject(scope), "an object with amenity, shop and craft lists");
   for (const key of ["amenity", "shop", "craft"]) {
     const list = (scope as Record<string, unknown>)[key];
@@ -145,4 +165,13 @@ export function relayUrl(cfg: Pick<Config, "relays">, name: string): string {
     throw new Error(`unknown relay "${name}"; the relays are ${Object.keys(cfg.relays).join(", ")}`);
   }
   return url;
+}
+
+/**
+ * The NIP-50 `search` string to add to every REQ filter sent to the relay called `name`, or
+ * undefined when config has none for it (the filter is then sent as it is).
+ */
+export function readSearch(cfg: Pick<Config, "relayReadSearch">, name: string): string | undefined {
+  const map = cfg.relayReadSearch;
+  return map !== undefined && Object.hasOwn(map, name) ? map[name] : undefined;
 }

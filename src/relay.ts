@@ -41,6 +41,11 @@ export async function connectRelay(url: string, timeoutMs: number): Promise<Abst
   return relay;
 }
 
+/** `filter` with the NIP-50 `search` field set to `search`; `filter` itself when there is none. */
+export function withSearch(filter: Filter, search: string | undefined): Filter {
+  return search === undefined ? filter : { ...filter, search };
+}
+
 /** Of two versions of a replaceable event, the newer; on a tie, the lower id (NIP-01). */
 export function newer(a: NostrEvent, b: NostrEvent | null): NostrEvent {
   if (b === null || a.created_at > b.created_at) return a;

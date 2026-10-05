@@ -25,6 +25,8 @@ export interface StubReqContext {
   send(ev: NostrEvent): void;
   /** Sends `["EOSE", <sub id>]`. */
   eose(): void;
+  /** Sends `["CLOSED", <sub id>, message]`, as a relay does when it refuses a REQ. */
+  closed(message: string): void;
 }
 
 /**
@@ -57,6 +59,7 @@ export async function startStubRelay(
         onReq(msg.slice(2) as Record<string, unknown>[], {
           send: (ev) => socket.send(JSON.stringify(["EVENT", subId, ev])),
           eose: () => socket.send(JSON.stringify(["EOSE", subId])),
+          closed: (message) => socket.send(JSON.stringify(["CLOSED", subId, message])),
         });
         return;
       }

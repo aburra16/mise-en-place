@@ -1,9 +1,17 @@
 import type { AbstractRelay } from "nostr-tools/abstract-relay";
 import type { NostrEvent } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
-import type { Config } from "../config.js";
+import { readSearch, type Config } from "../config.js";
 import { tagValue } from "../item.js";
-import { connectRelay, DEFAULT_READ_TIMEOUT_MS, newer, query, queryPaged, relayPageSize } from "../relay.js";
+import {
+  connectRelay,
+  DEFAULT_READ_TIMEOUT_MS,
+  newer,
+  query,
+  queryPaged,
+  relayPageSize,
+  withSearch,
+} from "../relay.js";
 import type { LiveItem, State } from "../state.js";
 
 const ITEM_KIND = 39999;
@@ -92,15 +100,22 @@ function extraCheckOf(stalledAt: number | undefined, pageSize: number): ExtraChe
  * created_at) is a version the deletion should have removed. One after it is a version state
  * never recorded, from an unfinished publish or a stale state backup, say. Either way the
  * relay serves an item that state says is gone.
+ *
+ * `search` is the relay's `relayReadSearch` entry, if it has one. It is part of the base filter,
+ * so every REQ below carries it: each #d batch, the deleted check and every page of the listing.
  */
 async function verifyRelay(
   url: string,
+  search: string | undefined,
   cfg: Config,
   live: Map<string, LiveItem>,
   deleted: string[],
   opts: VerifyOptions,
 ): Promise<RelayVerifyResult> {
-  const filter = { kinds: [ITEM_KIND], authors: [cfg.curatorPubkey], "#z": [cfg.headerCoordinate] };
+  const filter = withSearch(
+    { kinds: [ITEM_KIND], authors: [cfg.curatorPubkey], "#z": [cfg.headerCoordinate] },
+    search,
+  );
   const pageSize = opts.pageSize ?? (await relayPageSize(url, opts.fetchRelayInfo));
   const relay = await connectRelay(url, DEFAULT_READ_TIMEOUT_MS);
   try {
@@ -144,7 +159,7 @@ export async function verify(
   const results = await Promise.all(
     names.map(async (name): Promise<RelayVerifyResult> => {
       try {
-        return await verifyRelay(cfg.relays[name]!, cfg, live, deleted, opts);
+        return await verifyRelay(cfg.relays[name]!, readSearch(cfg, name), cfg, live, deleted, opts);
       } catch (err) {
         return {
           onRelay: 0,

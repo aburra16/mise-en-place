@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { NostrEvent } from "nostr-tools/core";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { build, type BuildOptions } from "../src/commands/build.js";
 import { census } from "../src/commands/census.js";
@@ -13,6 +14,7 @@ import type { Tags } from "../src/item.js";
 import { codeSpan } from "../src/markdown.js";
 import type { RawPlace } from "../src/source/btcmap.js";
 import { openState, type State } from "../src/state.js";
+import { startStubRelay } from "./stub-relay.js";
 
 const place15 = JSON.parse(readFileSync("tests/fixtures/place-15.json", "utf8")) as RawPlace;
 const PLACE15_OSM = "node:10011069455";
@@ -583,5 +585,95 @@ describe("fetchHeader", () => {
     );
     // Give a stray socket error event the chance to surface inside this test.
     await new Promise((resolve) => setTimeout(resolve, 100));
+  });
+});
+
+describe("header reads with relayReadSearch", () => {
+  const SEARCH = "include:spam";
+  const AUTH_REQUIRED = "auth-required: this relay answers through a web of trust and has no house observer to lend you";
+  const secret = generateSecretKey();
+  const pubkey = getPublicKey(secret);
+  const coordinate = `39998:${pubkey}:${COORD_D}`;
+
+  /** A loopback relay holding a signed header, which refuses a REQ without `search` like vespa-relay. */
+  async function headerRelay(needsSearch: boolean) {
+    const signed = finalizeEvent({ kind: 39998, created_at: 1_700_000_000, content: "", tags: header().tags }, secret);
+    const filters: Record<string, unknown>[] = [];
+    const stub = await startStubRelay(
+      () => {},
+      (received, ctx) => {
+        filters.push(...received);
+        if (needsSearch && received.some((f) => typeof f.search !== "string")) return ctx.closed(AUTH_REQUIRED);
+        ctx.send(signed);
+        ctx.eose();
+      },
+    );
+    return { stub, filters, signed };
+  }
+
+  it("fetchHeader adds search to its REQ when given one, and nothing when not", async () => {
+    const { stub, filters, signed } = await headerRelay(false);
+    try {
+      expect(await fetchHeader(stub.url, coordinate, 2000, SEARCH)).toEqual(signed);
+      expect(await fetchHeader(stub.url, coordinate, 2000)).toEqual(signed);
+    } finally {
+      await stub.close();
+    }
+    expect(filters).toEqual([
+      { kinds: [39998], authors: [pubkey], "#d": [COORD_D], search: SEARCH },
+      { kinds: [39998], authors: [pubkey], "#d": [COORD_D] },
+    ]);
+    expect(Object.hasOwn(filters[1]!, "search")).toBe(false);
+  });
+
+  it("fetchHeader is refused by a relay that wants search when it sends none", async () => {
+    const { stub } = await headerRelay(true);
+    try {
+      await expect(fetchHeader(stub.url, coordinate, 2000)).rejects.toThrow(/cannot read the header.*auth-required/);
+      expect((await fetchHeader(stub.url, coordinate, 2000, SEARCH))?.pubkey).toBe(pubkey);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("build reads the header with the header relay's entry in relayReadSearch", async () => {
+    const { stub, filters } = await headerRelay(true);
+    try {
+      cfg = {
+        ...cfg,
+        headerCoordinate: coordinate,
+        relays: { dcosl: stub.url, search: NO_RELAY },
+        headerRelay: "dcosl",
+        relayReadSearch: { dcosl: SEARCH },
+      };
+      writeCache(FIXTURE);
+
+      const result = await build(cfg, state, { firstRun: true, runId: "r1" });
+
+      expect(result.created).toBe(4);
+    } finally {
+      await stub.close();
+    }
+    expect(filters).toEqual([{ kinds: [39998], authors: [pubkey], "#d": [COORD_D], search: SEARCH }]);
+  });
+
+  it("build adds no search for a header relay without an entry", async () => {
+    const { stub, filters } = await headerRelay(false);
+    try {
+      // The entry is for the other relay, so the header read stays as it was.
+      cfg = {
+        ...cfg,
+        headerCoordinate: coordinate,
+        relays: { dcosl: stub.url, search: NO_RELAY },
+        headerRelay: "dcosl",
+        relayReadSearch: { search: SEARCH },
+      };
+      writeCache(FIXTURE);
+
+      await build(cfg, state, { firstRun: true, runId: "r1" });
+    } finally {
+      await stub.close();
+    }
+    expect(filters).toEqual([{ kinds: [39998], authors: [pubkey], "#d": [COORD_D] }]);
   });
 });

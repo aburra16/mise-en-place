@@ -106,6 +106,8 @@ Every step writes files the next one reads, so any stage can be inspected before
 
    It asks each relay for every live item and every deleted item by name, so `missing`, `stale` and a deleted item still on a relay (reported as `extra`) are exact however large the list. Extras that state never recorded at all can only be found by listing everything the relay holds, page by page. Paging cannot step past one `created_at` shared by more than a page of events, and `sign` gives every event of a run the same `created_at`. So after a run larger than one page (the relay's NIP-11 `max_limit`, at most 10000, or 500 when the relay publishes none), verify prints `warning: <relay>: extra check incomplete: ...`. The warning means only that the listing could not see every event; deleted items were still checked exactly, and the warning alone does not fail verify. `nak serve` publishes no `max_limit`, so a full-size rehearsal shows it too.
 
+   The search relay refuses a plain REQ (`CLOSED auth-required`) and needs the NIP-50 field `search: "include:spam"` on reads. `relayReadSearch` in `config.json` adds it to every read from that relay, the header read included. A relay with no entry is read as before.
+
 `npm run header:rebroadcast -- <relayName>` is a separate step: it copies Avi's signed header, byte for byte, from the header relay (dcosl) to the named relay, for example `search`. It needs no key and does not touch state; it refuses if the named relay is the header relay.
 
 ```bash

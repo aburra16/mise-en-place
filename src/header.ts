@@ -1,6 +1,6 @@
 import type { AbstractRelay } from "nostr-tools/abstract-relay";
 import type { NostrEvent } from "nostr-tools/core";
-import { connectRelay, newer, query } from "./relay.js";
+import { connectRelay, newer, query, withSearch } from "./relay.js";
 
 const HEADER_KIND = 39998;
 /** The fields every item this tool builds carries; the header must require exactly these. */
@@ -21,18 +21,21 @@ function parseCoordinate(coordinate: string): { kind: number; pubkey: string; d:
 /**
  * Reads the header at `coordinate` from one relay: the newest matching event, or null when
  * the relay has none. Throws if the relay cannot be reached or does not answer within
- * `timeoutMs`, so a slow relay is never mistaken for a missing header.
+ * `timeoutMs`, so a slow relay is never mistaken for a missing header. `search` is the NIP-50
+ * string a relay that refuses a plain REQ needs (see `relayReadSearch`).
  */
 export async function fetchHeader(
   relayUrl: string,
   coordinate: string,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  search?: string,
 ): Promise<NostrEvent | null> {
   const { kind, pubkey, d } = parseCoordinate(coordinate);
   let relay: AbstractRelay | undefined;
   try {
     relay = await connectRelay(relayUrl, timeoutMs);
-    const found = await query(relay, { kinds: [kind], authors: [pubkey], "#d": [d] }, timeoutMs);
+    const filter = withSearch({ kinds: [kind], authors: [pubkey], "#d": [d] }, search);
+    const found = await query(relay, filter, timeoutMs);
     return found.reduce<NostrEvent | null>((best, ev) => newer(ev, best), null);
   } catch (err) {
     throw new Error(`cannot read the header: ${err instanceof Error ? err.message : String(err)}`);

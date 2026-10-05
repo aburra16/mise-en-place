@@ -96,6 +96,8 @@ function newWorld(relays?: Record<string, string>): World {
     curatorPubkey: getPublicKey(secret),
     relays: relays ?? { dcosl: dcoslNak.url, search: searchNak.url },
     headerRelay: "dcosl",
+    // nak serve needs no search field, as in config.rehearsal.example.json.
+    relayReadSearch: undefined,
     publish: { eventsPerSecond: 1000, okTimeoutMs: 5_000 },
     paths: { data: join(dir, "data"), out: join(dir, "out"), state: join(dir, "state.sqlite") },
   };

@@ -6,6 +6,7 @@
     "search": "wss://search.brainstorm.world"
   },
   "headerRelay": "dcosl",
+  "relayReadSearch": { "search": "include:spam" },
   "scope": {
     "amenity": ["restaurant", "cafe", "fast_food", "bar", "pub", "biergarten", "food_court", "ice_cream"],
     "shop": ["bakery", "pastry", "confectionery", "chocolate", "deli", "cheese", "butcher", "seafood", "greengrocer", "farm", "dairy", "spices", "coffee", "tea", "wine", "alcohol", "beverages", "health_food"],

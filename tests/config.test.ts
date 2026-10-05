@@ -48,7 +48,11 @@ describe("loadConfig", () => {
   });
 
   it("MISE_CONFIG selects the file", () => {
-    process.env.MISE_CONFIG = tempConfig({ relays: { local: "ws://x" }, headerRelay: "local" });
+    process.env.MISE_CONFIG = tempConfig({
+      relays: { local: "ws://x" },
+      headerRelay: "local",
+      relayReadSearch: undefined,
+    });
     expect(loadConfig().relays).toEqual({ local: "ws://x" });
   });
 });
@@ -147,6 +151,72 @@ describe("loadConfig field checks", () => {
     for (const path of Object.values(example.paths)) expect(path.startsWith("state/rehearsal/")).toBe(true);
     for (const key of ["data", "out", "state"] as const) expect(example.paths[key]).not.toBe(base().paths[key]);
     expect(example.relays).toEqual({ local: "ws://localhost:10547" });
+  });
+});
+
+describe("relayReadSearch", () => {
+  /** The message loadConfig throws for config.json with `overrides`; fails if it accepts. */
+  function rejection(overrides: Record<string, unknown>): { path: string; message: string } {
+    const path = tempConfig(overrides);
+    try {
+      loadConfig(path);
+    } catch (err) {
+      return { path, message: (err as Error).message };
+    }
+    throw new Error(`loadConfig accepted ${JSON.stringify(overrides)}`);
+  }
+
+  it("is set to include:spam for the search relay in config.json", () => {
+    expect(loadConfig("config.json").relayReadSearch).toEqual({ search: "include:spam" });
+  });
+
+  it("is absent from the rehearsal example, which needs none", () => {
+    const example = JSON.parse(readFileSync("config.rehearsal.example.json", "utf8")) as Record<string, unknown>;
+    expect(Object.hasOwn(example, "relayReadSearch")).toBe(false);
+  });
+
+  it("accepts a map of relay names to search strings", () => {
+    const relayReadSearch = { dcosl: "a", search: "include:spam" };
+    expect(loadConfig(tempConfig({ relayReadSearch })).relayReadSearch).toEqual(relayReadSearch);
+  });
+
+  it("accepts an empty map and an absent key", () => {
+    expect(loadConfig(tempConfig({ relayReadSearch: {} })).relayReadSearch).toEqual({});
+    expect(loadConfig(tempConfig({ relayReadSearch: undefined })).relayReadSearch).toBeUndefined();
+  });
+
+  it("refuses a name that is not one of the relays, naming the file, the field and the name", () => {
+    const { path, message } = rejection({ relayReadSearch: { nope: "include:spam" } });
+    expect(message).toContain(path);
+    expect(message).toContain("relayReadSearch.nope ");
+    expect(message).toContain("dcosl, search");
+  });
+
+  it("refuses a name that only exists on Object.prototype", () => {
+    const { message } = rejection({ relayReadSearch: { constructor: "include:spam" } });
+    expect(message).toContain("relayReadSearch.constructor ");
+  });
+
+  it.each([
+    ["an empty string", ""],
+    ["a blank string", "   "],
+    ["a number", 7],
+    ["null", null],
+    ["a list", ["include:spam"]],
+  ])("refuses %s as a search value, naming the file and the field", (_label, value) => {
+    const { path, message } = rejection({ relayReadSearch: { search: value } });
+    expect(message).toContain(path);
+    expect(message).toContain("relayReadSearch.search ");
+  });
+
+  it.each([
+    ["an array", ["include:spam"]],
+    ["a string", "include:spam"],
+    ["null", null],
+  ])("refuses %s in place of the map, naming the file and the field", (_label, relayReadSearch) => {
+    const { path, message } = rejection({ relayReadSearch });
+    expect(message).toContain(path);
+    expect(message).toContain("relayReadSearch ");
   });
 });
 
