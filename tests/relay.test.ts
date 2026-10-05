@@ -20,8 +20,10 @@ describe("relayPageSize", () => {
     expect(await relayPageSize("ws://127.0.0.1:1", info({ limitation: { max_limit: 300 } }))).toBe(300);
   });
 
-  it("caps max_limit at 5000", async () => {
-    expect(await relayPageSize("ws://127.0.0.1:1", info({ limitation: { max_limit: 10_000 } }))).toBe(5000);
+  it("honours max_limit up to 10000, and caps it there", async () => {
+    for (const [max, expected] of [[5_001, 5_001], [10_000, 10_000], [10_001, 10_000], [50_000, 10_000]]) {
+      expect(await relayPageSize("ws://127.0.0.1:1", info({ limitation: { max_limit: max } }))).toBe(expected);
+    }
   });
 
   it("falls back to 500 when the document has no usable max_limit", async () => {

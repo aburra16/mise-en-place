@@ -7,8 +7,8 @@ import { verifyEvent } from "nostr-tools/pure";
 export const DEFAULT_READ_TIMEOUT_MS = 10_000;
 /** strfry's default `maxFilterLimit`; a page larger than a relay's cap would hide a stall. */
 const DEFAULT_PAGE_SIZE = 500;
-/** The largest page asked for, whatever a relay advertises. */
-const MAX_PAGE_SIZE = 5_000;
+/** The largest page asked for, whatever a relay advertises (dcosl advertises 10000). */
+const MAX_PAGE_SIZE = 10_000;
 /** How long the NIP-11 read may take before the default page size is used. */
 const INFO_TIMEOUT_MS = 3_000;
 

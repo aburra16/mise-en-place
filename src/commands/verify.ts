@@ -19,15 +19,18 @@ export interface RelayVerifyResult {
   inState: number;
   /** Live in state, absent from the relay. Exact: every live `d` is asked for by name. Sorted. */
   missing: string[];
-  /** On the relay, not live in state. Only those seen when `extraCheck` is incomplete. Sorted. */
+  /**
+   * On the relay, not live in state. Exact for every `d` state records as deleted: each is
+   * asked for by name. Any other extra only as far as `extraCheck` says. Sorted.
+   */
   extra: string[];
   /** Live and on the relay, but the relay's newest version is not the one state recorded. Exact. Sorted. */
   stale: string[];
   /**
-   * Extras can only be found by listing everything the relay holds, paging by `until`. That
-   * cannot step past one `created_at` shared by more than a page of events, and one run's
-   * events all share one, so a large run leaves this incomplete. missing and stale are exact
-   * either way.
+   * Extras that state never heard of can only be found by listing everything the relay holds,
+   * paging by `until`. That cannot step past one `created_at` shared by more than a page of
+   * events, and one run's events all share one, so a large run leaves this incomplete. missing,
+   * stale and the deleted items are exact either way.
    */
   extraCheck: ExtraCheck;
   /** Set when the relay could not be read; the lists are then empty. */
@@ -48,7 +51,8 @@ const dOf = (ev: NostrEvent) => tagValue(ev.tags, "d") ?? "";
  * or of one page if the relay's page is smaller, so the relay's own cap never cuts a batch
  * short unseen. A relay returns the newest events first, so an answer that names every `d` of
  * the batch holds each one's newest version even if it is full. A full answer that leaves a
- * `d` out may have cut it off, and that is an error rather than a false "missing".
+ * `d` out may have cut it off, and that is an error rather than a false "missing" (or, for
+ * deleted items, a false "not there").
  */
 async function newestByD(
   relay: AbstractRelay,
@@ -66,7 +70,7 @@ async function newestByD(
     if (events.length >= limit && batch.some((d) => !newest.has(d))) {
       throw new Error(
         `${relay.url} returned a full page (${limit}) for ${batch.length} items and left some out, ` +
-          "so verify cannot tell missing from cut off",
+          "so verify cannot tell an absent item from one cut off",
       );
     }
   }
@@ -79,11 +83,21 @@ function extraCheckOf(stalledAt: number | undefined, pageSize: number): ExtraChe
   return `incomplete: ${why}, so listing by until could not see them all`;
 }
 
-/** One relay, on one connection: every live `d` by name, then everything listed for extras. */
+/**
+ * One relay, on one connection: every live `d` by name, every deleted `d` by name, then
+ * everything listed for extras.
+ *
+ * The deleted check's rule: a deleted `d` is extra when the relay returns any kind 39999 for it,
+ * whatever its `created_at`. One at or before the item's last_changed (the deletion's
+ * created_at) is a version the deletion should have removed. One after it is a version state
+ * never recorded, from an unfinished publish or a stale state backup, say. Either way the
+ * relay serves an item that state says is gone.
+ */
 async function verifyRelay(
   url: string,
   cfg: Config,
   live: Map<string, LiveItem>,
+  deleted: string[],
   opts: VerifyOptions,
 ): Promise<RelayVerifyResult> {
   const filter = { kinds: [ITEM_KIND], authors: [cfg.curatorPubkey], "#z": [cfg.headerCoordinate] };
@@ -91,8 +105,10 @@ async function verifyRelay(
   const relay = await connectRelay(url, DEFAULT_READ_TIMEOUT_MS);
   try {
     const held = await newestByD(relay, filter, [...live.keys()], pageSize);
+    const stillThere = await newestByD(relay, filter, deleted, pageSize);
     const listed = await queryPaged(relay, filter, pageSize, DEFAULT_READ_TIMEOUT_MS);
-    const extra = [...new Set(listed.events.map(dOf))].filter((d) => !live.has(d)).sort();
+    const seen = [...stillThere.keys(), ...listed.events.map(dOf)];
+    const extra = [...new Set(seen)].filter((d) => !live.has(d)).sort();
     return {
       onRelay: held.size + extra.length,
       inState: live.size,
@@ -110,9 +126,10 @@ async function verifyRelay(
 }
 
 /**
- * Compares each configured relay with the live items in state, all relays at once, on the
- * filter `{kinds:[39999], authors:[curator], "#z":[coordinate]}`. missing and stale are exact
- * for any number of items; extras are as complete as `extraCheck` says. The page size is the
+ * Compares each configured relay with the items in state, all relays at once, on the filter
+ * `{kinds:[39999], authors:[curator], "#z":[coordinate]}`. missing, stale and extras among the
+ * deleted items are exact for any number of items; other extras are as complete as
+ * `extraCheck` says. The page size is the
  * relay's NIP-11 max_limit (see relayPageSize). A relay that cannot be read gets an `error`
  * and does not stop the others.
  */
@@ -122,11 +139,12 @@ export async function verify(
   opts: VerifyOptions = {},
 ): Promise<Record<string, RelayVerifyResult>> {
   const live = state.liveItems();
+  const deleted = state.deletedItems();
   const names = Object.keys(cfg.relays);
   const results = await Promise.all(
     names.map(async (name): Promise<RelayVerifyResult> => {
       try {
-        return await verifyRelay(cfg.relays[name]!, cfg, live, opts);
+        return await verifyRelay(cfg.relays[name]!, cfg, live, deleted, opts);
       } catch (err) {
         return {
           onRelay: 0,

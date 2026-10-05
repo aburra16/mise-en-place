@@ -106,6 +106,21 @@ describe("items", () => {
     expect(state.liveItems().size).toBe(0);
   });
 
+  it("deletedItems lists the d of every deleted item, sorted, and changes nothing", () => {
+    expect(state.deletedItems()).toEqual([]);
+    state.markLive("osm-node-3", "hash-c", "[3]", "e3", 100);
+    state.markLive("osm-node-1", "hash-a", "[1]", "e1", 100);
+    state.markLive("osm-node-2", "hash-b", "[2]", "e2", 100);
+    state.markDeleted("osm-node-3", 200);
+    state.markDeleted("osm-node-1", 200);
+    expect(state.deletedItems()).toEqual(["osm-node-1", "osm-node-3"]);
+    expect(state.deletedItems()).toEqual(["osm-node-1", "osm-node-3"]);
+    expect(state.counts()).toEqual({ live: 1, deleted: 2 });
+
+    state.markLive("osm-node-3", "hash-d", "[4]", "e4", 300); // revived
+    expect(state.deletedItems()).toEqual(["osm-node-1"]);
+  });
+
   it("counts items by status, and a revived item counts as live again", () => {
     expect(state.counts()).toEqual({ live: 0, deleted: 0 });
     state.markLive("osm-node-1", "hash-a", "[1]", "e1", 100);

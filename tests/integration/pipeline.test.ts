@@ -325,6 +325,30 @@ describe("pipeline against nak serve", () => {
     }
   });
 
+  it("a deleted d still on a relay is extra even when the listing extra check is incomplete", async () => {
+    // r1 publishes one item; r2 the other five, all sharing r2's later created_at. A page of 4
+    // stalls on that created_at, so listing never reaches r1's older item.
+    const first = await buildAndSign(PLACES.slice(0, 1), "r1");
+    await publish(w.cfg, w.state, first.runDir);
+    const second = await buildAndSign(PLACES, "r2");
+    expect(second.built).toMatchObject({ created: 5, unchanged: 1 });
+    await publish(w.cfg, w.state, second.runDir);
+    const gone = dOf(PLACES[0]!);
+    // State says deleted (after both runs), but no relay was ever sent a deletion.
+    w.state.markDeleted(gone, ++clock);
+
+    const result = await verifyHere({ fetchRelayInfo: withMaxLimit(4) });
+
+    for (const r of Object.values(result)) {
+      expect(r.error).toBeUndefined();
+      expect(r.extraCheck).toMatch(/^incomplete: more than 4 events share created_at \d+/);
+      expect(r.extra).toEqual([gone]);
+      expect(r.missing).toEqual([]);
+      expect(r.stale).toEqual([]);
+      expect(r).toMatchObject({ onRelay: 6, inState: 5 });
+    }
+  });
+
   it("a d removed from the relay shows as missing in a #d batch past the first 200", async () => {
     const many = restaurants(250);
     const { runDir, events } = await buildAndSign(many, "r1");
