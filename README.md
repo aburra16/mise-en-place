@@ -76,6 +76,8 @@ Every step writes files the next one reads, so any stage can be inspected before
 
 3. `build` reads the newest cache, `state/state.sqlite` and the header on dcosl, and stops if the header is missing or its `required` fields changed. It also stops when the state file holds no items at all, unless given `--first-run` (see Backups). It writes `out/<runId>/unsigned.jsonl` (new and changed items, then deletions), `out/<runId>/manifest.json` and `out/<runId>/report.md`. It prints the run directory; `<runId>` is its last part. A run is never overwritten.
 
+   Before it writes a new run, `build` scans `out/` for earlier runs that were never fully published and prints one warning on stderr for each, then carries on. A run is named when it has an `unsigned.jsonl` with events but no `signed.jsonl` (`not signed`), or when its `signed.jsonl` holds events a relay has not accepted, per state (`not published to <relay>: n of m events missing`, with the relays from the run's `manifest.json`). A pilot built but never published, followed by a full build, shows up this way. This build compares against what state records as published, so whatever such a run left unpublished is built again here. To stop a warning, publish the run, or delete its directory if you mean to abandon it. A directory without a `manifest.json` is not a run and is ignored.
+
    `manifest.json` records the config the run was built with: the header coordinate, the curator pubkey, the relays and the state file. `sign` and `publish` refuse a run whose record differs from the config they load, and name the field that differs.
 
    ```bash

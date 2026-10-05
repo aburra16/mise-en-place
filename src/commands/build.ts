@@ -4,6 +4,7 @@ import type { NostrEvent } from "nostr-tools/core";
 import { buildCatalog, type Catalog } from "../catalog.js";
 import { readSearch, type Config } from "../config.js";
 import { deletionFor, type Unsigned } from "../deletion.js";
+import { earlierRunWarnings } from "../earlier-runs.js";
 import { diffItems, summarizeChanges, type ChangeSummary } from "../diff.js";
 import { checkHeader, fetchHeader } from "../header.js";
 import { tagValue, type Tags } from "../item.js";
@@ -30,6 +31,8 @@ export interface BuildOptions {
   runId?: string;
   /** The header event; when absent it is read from `cfg.headerRelay`. Tests inject it. */
   header?: NostrEvent;
+  /** Takes each warning line (earlier runs never fully published). Defaults to a line on stderr. */
+  onWarning?: (line: string) => void;
 }
 
 export interface BuildResult {
@@ -303,7 +306,9 @@ function renderReport(r: ReportInput): string {
  * no pilot) looks for deletions. More of them than the guard allows abort the build unless
  * `allowDeletions` equals the count gone, and a given `allowDeletions` that differs from the count
  * aborts it even within the guard (deletionRefusal). A state with no items at all is refused
- * unless `firstRun` is set (checkFirstRun). A run is written only on success: when it throws
+ * unless `firstRun` is set (checkFirstRun). Before the run is written, each earlier run in
+ * `paths.out` that was never fully published is named in a warning (earlierRunWarnings); the
+ * build goes on. A run is written only on success: when it throws
  * there is no run dir, but a deletion refusal also leaves `<paths.out>/refused-<timestamp>.md`
  * listing the items it would have deleted (writeRefusedList).
  */
@@ -343,6 +348,11 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
     live: live.size,
   });
   if (refusal !== undefined) throw new Error(`${refusal}${writeRefusedList(cfg, refusal, diff.gone, live)}`);
+
+  // Only a build that goes on warns. Earlier runs are never refused over: this build diffs against
+  // what state records as published, so it builds again whatever they left unpublished.
+  const warn = opts.onWarning ?? ((line: string) => process.stderr.write(`${line}\n`));
+  for (const line of earlierRunWarnings(cfg, state)) warn(line);
 
   // Every recorded version, plus the latest id in case a crash kept it out of the events table.
   const deletions = diff.gone.map((d) =>

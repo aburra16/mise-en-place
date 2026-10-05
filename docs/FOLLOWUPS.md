@@ -1,10 +1,6 @@
 # Follow-ups
 
-Known, deliberately deferred items from the build of the importer (2026-10-05). None blocks the pilot. Items marked "before full import" should land before plan Task 12.
-
-## Before the full import
-
-- `build` does not warn about earlier runs that were built or signed but never published (for example, a pilot built but not published, followed by a full build).
+Known, deliberately deferred items from the build of the importer (2026-10-05). None blocks the pilot.
 
 ## Pilot checks (spec §5, §7.2)
 

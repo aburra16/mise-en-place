@@ -82,3 +82,19 @@ export function checkRunConfig(cfg: Config, runDir: string): void {
     }
   }
 }
+
+/**
+ * The relay names a run was built for: the keys of `config.relays` in `<runDir>/manifest.json`.
+ * Undefined when the manifest cannot be read or records no relays, so the caller can fall back
+ * to its own. Reads only; `checkRunConfig` is what refuses a run.
+ */
+export function manifestRelays(runDir: string): string[] | undefined {
+  try {
+    const manifest: unknown = JSON.parse(readFileSync(join(runDir, "manifest.json"), "utf8"));
+    const relays = isObject(manifest) && isObject(manifest.config) ? manifest.config.relays : undefined;
+    const names = isObject(relays) ? Object.keys(relays) : [];
+    return names.length > 0 ? names : undefined;
+  } catch {
+    return undefined;
+  }
+}

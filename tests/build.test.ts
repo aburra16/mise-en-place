@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { NostrEvent } from "nostr-tools/core";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { build, type BuildOptions } from "../src/commands/build.js";
 import { census } from "../src/commands/census.js";
 import { headerAuthor, loadConfig, type Config } from "../src/config.js";
@@ -36,8 +36,11 @@ const NO_RELAY = "ws://127.0.0.1:9";
 let dir: string;
 let cfg: Config;
 let state: State;
+/** What `build` warned about through `onWarning`, one line each: nothing reaches the real stderr. */
+let warnings: string[];
 
 beforeEach(() => {
+  warnings = [];
   dir = mkdtempSync(join(tmpdir(), "mise-build-"));
   const base = loadConfig("config.json");
   cfg = {
@@ -86,7 +89,7 @@ function header(over: Partial<NostrEvent> = {}): NostrEvent {
 
 /** A build with the header injected; `firstRun` is set so an empty state is allowed. */
 function run(opts: BuildOptions = {}) {
-  return build(cfg, state, { header: header(), firstRun: true, ...opts });
+  return build(cfg, state, { header: header(), firstRun: true, onWarning: (line) => warnings.push(line), ...opts });
 }
 
 function lines(runDir: string): Unsigned[] {
@@ -640,12 +643,12 @@ describe("build", () => {
   it("a state that holds items, live or only deleted, needs no firstRun", async () => {
     writeCache(FIXTURE);
     state.markLive("osm-node-101", "old-hash", "[]", "ev-101", 1);
-    const withLive = await build(cfg, state, { runId: "r1", header: header() });
+    const withLive = await build(cfg, state, { runId: "r1", header: header(), onWarning: () => {} });
     expect(withLive.changed).toBe(1);
 
     state.markDeleted("osm-node-101", 2);
     expect(state.counts()).toEqual({ live: 0, deleted: 1 });
-    const onlyDeleted = await build(cfg, state, { runId: "r2", header: header() });
+    const onlyDeleted = await build(cfg, state, { runId: "r2", header: header(), onWarning: () => {} });
     expect(onlyDeleted.created).toBe(4);
   });
 
@@ -753,6 +756,211 @@ describe("build", () => {
       expect(section(readFileSync(join(result.runDir, "report.md"), "utf8"))).toContain(
         "- `osm-node-1000`: `*Star* _Bar_` (alt, name)",
       );
+    });
+  });
+
+  describe("earlier runs that were never fully published", () => {
+    const eventIds = (n: number) => Array.from({ length: n }, (_, i) => String(i).padStart(2, "0").repeat(32));
+    const outOf = (runId: string) => join(cfg.paths.out, runId);
+
+    /** Stands in for `sign`: only the ids matter to the scan, so each line is a bare event. */
+    function signedWith(runId: string, ids: string[]): void {
+      const lines = ids.map((id) => `${JSON.stringify({ kind: 39999, content: "x".repeat(300), id })}\n`);
+      writeFileSync(join(outOf(runId), "signed.jsonl"), lines.join(""));
+    }
+
+    /** Stands in for `publish`: state records that `relay` accepted each of `ids`. */
+    function acceptedOn(relay: string, ids: string[]): void {
+      for (const id of ids) {
+        state.recordResult({ eventId: id, d: `d-${id}`, kind: 39999, createdAt: 1, runId: "r1", relay, ok: true, message: "" });
+      }
+    }
+
+    /** A hand-made run dir, for the cases `build` would not write itself. */
+    function fakeRun(runId: string, files: Record<string, string>): void {
+      mkdirSync(outOf(runId), { recursive: true });
+      for (const [name, text] of Object.entries(files)) writeFileSync(join(outOf(runId), name), text);
+    }
+
+    it("warns about an earlier run that was built but never signed, and still builds", async () => {
+      writeCache(restaurants(3));
+      await run({ runId: "r1" });
+      expect(warnings).toEqual([]); // the first build has nothing earlier, and no out dir yet
+
+      const second = await run({ runId: "r2" });
+
+      expect(warnings).toEqual(["warning: earlier run r1 is not fully published: not signed"]);
+      expect(existsSync(second.runDir)).toBe(true);
+      expect(second.created).toBe(3);
+    });
+
+    it("sends the warning to stderr when no onWarning is given", async () => {
+      writeCache(restaurants(3));
+      await run({ runId: "r1" });
+      const written: unknown[] = [];
+      const write = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+        written.push(chunk);
+        return true;
+      });
+      try {
+        await build(cfg, state, { runId: "r2", header: header(), firstRun: true });
+      } finally {
+        write.mockRestore();
+      }
+      expect(written).toEqual(["warning: earlier run r1 is not fully published: not signed\n"]);
+    });
+
+    it("does not warn about a run every configured relay has accepted in full", async () => {
+      writeCache(restaurants(4));
+      await run({ runId: "r1" });
+      const ids = eventIds(4);
+      signedWith("r1", ids);
+      acceptedOn("dcosl", ids);
+      acceptedOn("search", ids);
+
+      await run({ runId: "r2" });
+
+      expect(warnings).toEqual([]);
+    });
+
+    it("names the relay and the counts for a run published in part", async () => {
+      writeCache(restaurants(6));
+      await run({ runId: "r1" });
+      const ids = eventIds(6);
+      signedWith("r1", ids);
+      acceptedOn("dcosl", ids);
+      acceptedOn("search", ids.slice(0, 3));
+
+      await run({ runId: "r2" });
+
+      expect(warnings).toEqual([
+        "warning: earlier run r1 is not fully published: not published to search: 3 of 6 events missing",
+      ]);
+    });
+
+    it("names every relay that is short, and a signed run no relay has seen", async () => {
+      writeCache(restaurants(4));
+      await run({ runId: "r1" });
+      signedWith("r1", eventIds(4));
+      acceptedOn("search", eventIds(4).slice(0, 1));
+
+      await run({ runId: "r2" });
+
+      expect(warnings).toEqual([
+        "warning: earlier run r1 is not fully published: " +
+          "not published to dcosl: 4 of 4 events missing; not published to search: 3 of 4 events missing",
+      ]);
+    });
+
+    it("does not count an event that failed or is still pending as published", async () => {
+      writeCache(restaurants(2));
+      await run({ runId: "r1" });
+      const ids = eventIds(2);
+      signedWith("r1", ids);
+      acceptedOn("dcosl", ids);
+      acceptedOn("search", ids.slice(0, 1));
+      state.recordResult({ eventId: ids[1]!, d: "d", kind: 39999, createdAt: 1, runId: "r1", relay: "search", ok: false, message: "pending" });
+
+      await run({ runId: "r2" });
+
+      expect(warnings).toEqual(["warning: earlier run r1 is not fully published: not published to search: 1 of 2 events missing"]);
+    });
+
+    it("checks the relays recorded in the run's manifest, not the ones configured now", async () => {
+      writeCache(restaurants(2));
+      await run({ runId: "r1" });
+      const manifestPath = join(outOf("r1"), "manifest.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { config: { relays: Record<string, string> } };
+      manifest.config.relays = { alpha: NO_RELAY, dcosl: NO_RELAY };
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+      const ids = eventIds(2);
+      signedWith("r1", ids);
+      acceptedOn("dcosl", ids);
+      acceptedOn("search", ids); // configured now, but not a relay r1 was built for
+
+      await run({ runId: "r2" });
+
+      expect(warnings).toEqual(["warning: earlier run r1 is not fully published: not published to alpha: 2 of 2 events missing"]);
+    });
+
+    it("is complete once the manifest's one relay has everything, though others are configured", async () => {
+      writeCache(restaurants(2));
+      await run({ runId: "r1" });
+      const manifestPath = join(outOf("r1"), "manifest.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { config: { relays: Record<string, string> } };
+      manifest.config.relays = { dcosl: NO_RELAY };
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+      signedWith("r1", eventIds(2));
+      acceptedOn("dcosl", eventIds(2));
+
+      await run({ runId: "r2" });
+
+      expect(warnings).toEqual([]);
+    });
+
+    it("falls back to the configured relays when the manifest records none", async () => {
+      fakeRun("r1", { "manifest.json": "{}", "unsigned.jsonl": "x\n" });
+      signedWith("r1", eventIds(1));
+      acceptedOn("dcosl", eventIds(1));
+      writeCache(restaurants(1));
+
+      await run({ runId: "r2" });
+
+      expect(warnings).toEqual(["warning: earlier run r1 is not fully published: not published to search: 1 of 1 events missing"]);
+    });
+
+    it("warns once per run, in run id order, and counts each run on its own", async () => {
+      writeCache(restaurants(2));
+      await run({ runId: "r2" });
+      await run({ runId: "r1-pilot", pilot: 1 });
+      await run({ runId: "r3" });
+      signedWith("r3", eventIds(2));
+      acceptedOn("dcosl", eventIds(2));
+      acceptedOn("search", eventIds(2));
+      warnings.length = 0;
+
+      await run({ runId: "r4" });
+
+      expect(warnings).toEqual([
+        "warning: earlier run r1-pilot is not fully published: not signed",
+        "warning: earlier run r2 is not fully published: not signed",
+      ]);
+    });
+
+    it("ignores a dir without a manifest.json, a plain file, a refusal list and a run with nothing to sign", async () => {
+      fakeRun("no-manifest", { "unsigned.jsonl": "x\n" });
+      fakeRun("signed-no-manifest", { "signed.jsonl": `${JSON.stringify({ id: eventIds(1)[0] })}\n` });
+      fakeRun("nothing-to-sign", { "manifest.json": "{}", "unsigned.jsonl": "" });
+      fakeRun("only-a-manifest", { "manifest.json": "{}" });
+      writeFileSync(join(cfg.paths.out, "refused-20261001T000000Z.md"), "# Refused build\n");
+      writeFileSync(join(cfg.paths.out, "notes.txt"), "x");
+      writeCache(restaurants(1));
+
+      await run({ runId: "r1" });
+
+      expect(warnings).toEqual([]);
+    });
+
+    it("reports a signed.jsonl it cannot read instead of failing the build", async () => {
+      writeCache(restaurants(1));
+      await run({ runId: "r1" });
+      writeFileSync(join(outOf("r1"), "signed.jsonl"), `${JSON.stringify({ id: eventIds(1)[0] })}\nnot json\n`);
+
+      const second = await run({ runId: "r2" });
+
+      expect(warnings).toEqual(["warning: could not check earlier run r1: signed.jsonl line 2 is not a nostr event with an id"]);
+      expect(existsSync(second.runDir)).toBe(true);
+    });
+
+    it("says nothing when the build is refused, since no run is written", async () => {
+      const all = restaurants(100);
+      writeCache(all);
+      publishAll((await run({ runId: "r1" })).runDir);
+      writeCache(all.slice(3), "2026-10-06");
+
+      await expect(run({ runId: "r2" })).rejects.toThrow(/would delete 3 of 100/);
+
+      expect(warnings).toEqual([]);
     });
   });
 
