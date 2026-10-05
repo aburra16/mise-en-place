@@ -155,6 +155,33 @@ describe("loadKey", () => {
     expectNoSecret(message);
   });
 
+  describe("refuses an nsec that decodes but is not a usable secret key, without the library's words", () => {
+    const cases: [string, Uint8Array][] = [
+      ["a 33-byte payload", Uint8Array.from([...secret, 7])],
+      ["an all-zero scalar", new Uint8Array(32)],
+    ];
+
+    it.each(cases)("%s", async (_name, bytes) => {
+      let libraryMessage = "";
+      try {
+        getPublicKey(bytes);
+      } catch (err) {
+        libraryMessage = (err as Error).message;
+      }
+      expect(libraryMessage).not.toBe(""); // the library does refuse it, so loadKey must catch that
+      const bad = nip19.encodeBytes("nsec", bytes);
+      writeKey(bad);
+
+      const message = await failure(() => loadKey(keyPath, pubkey, noPassphrase));
+
+      expect(message).toBe(`${keyPath} does not hold a valid secret key`);
+      expect(message).not.toContain(libraryMessage);
+      expect(message).not.toContain(bad);
+      expect(message).not.toContain(bytesToHex(bytes));
+      expectNoSecret(message);
+    });
+  });
+
   it("refuses an npub, which is not a secret key", async () => {
     writeKey(nip19.npubEncode(pubkey));
     const message = await failure(() => loadKey(keyPath, pubkey, noPassphrase));

@@ -10,6 +10,7 @@ import type { Unsigned } from "../src/deletion.js";
 import { contentHash } from "../src/diff.js";
 import { checkHeader, fetchHeader } from "../src/header.js";
 import type { Tags } from "../src/item.js";
+import { codeSpan } from "../src/markdown.js";
 import type { RawPlace } from "../src/source/btcmap.js";
 import { openState, type State } from "../src/state.js";
 
@@ -246,8 +247,26 @@ describe("build", () => {
 
     const report = readFileSync(join(result.runDir, "report.md"), "utf8");
     const section = report.slice(report.indexOf("## Deletions"));
-    expect(section).toContain("osm-node-555: Old Diner");
-    expect(section).toContain("osm-node-556: (no name recorded)");
+    expect(section).toContain("- `osm-node-555`: `Old Diner` (1 event id)");
+    expect(section).toContain("- `osm-node-556`: (no name recorded) (1 event id)");
+  });
+
+  it("renders gone and held names and their d as code spans, so markdown in a name stays literal", async () => {
+    const name = "*Star* _Bar_ `Tick` ``Two``";
+    const span = "``` *Star* _Bar_ `Tick` ``Two`` ```"; // a fence longer than any run inside
+    writeCache(FIXTURE.map((p) => (p.id === 103 ? { ...p, lat: null } : p))); // 103 is held
+    for (const d of ["osm-node-103", "osm-node-555"]) {
+      const tags: Tags = [["d", d], ["name", name]];
+      state.markLive(d, contentHash(tags), JSON.stringify(tags), `ev-${d}`, 1);
+    }
+
+    const result = await run({ runId: "r1", allowDeletions: true });
+
+    const report = readFileSync(join(result.runDir, "report.md"), "utf8");
+    const deletions = report.slice(report.indexOf("## Deletions"), report.indexOf("## Held"));
+    expect(deletions).toContain(`- \`osm-node-555\`: ${span} (1 event id)`);
+    const held = report.slice(report.indexOf("## Held"), report.indexOf("## Skipped"));
+    expect(held).toContain(`- \`osm-node-103\`: ${span} (live, kept)`);
   });
 
   it("a place missing from the cache becomes a kind-5 deletion with all its versions", async () => {
@@ -494,6 +513,19 @@ describe("build", () => {
     expect(report).toMatch(/\| name \| 4 \| 100\.0% \|/);
     expect(report).toMatch(/\| website \| 1 \| 25\.0% \|/);
     expect(report).toContain('["d","osm-node-101"]');
+  });
+});
+
+describe("codeSpan", () => {
+  it.each([
+    ["Old Diner", "`Old Diner`"],
+    ["a `b` c", "``a `b` c``"],
+    ["`start", "`` `start ``"],
+    ["end``", "``` end`` ```"],
+    [" both ", "`  both  `"],
+    ["two\nlines\r\nhere", "`two lines here`"],
+  ])("%j becomes %j", (text, expected) => {
+    expect(codeSpan(text)).toBe(expected);
   });
 });
 

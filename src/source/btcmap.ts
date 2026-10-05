@@ -7,6 +7,8 @@ import type { Place } from "../place.js";
 export type RawPlace = Record<string, unknown>;
 
 const API = "https://api.btcmap.org/v4/places";
+/** How long the whole fetch, body included, may take. */
+const DEFAULT_TIMEOUT_MS = 120_000;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CACHE_FILE_RE = /^places-\d{4}-\d{2}-\d{2}\.json$/;
 
@@ -84,18 +86,28 @@ export function readCache(path: string): RawPlace[] {
 /**
  * Fetches every place into `<data>/cache/places-<today>.json`. A cache that is later read as
  * the full truth (so absence means deletion) must never be written from a bad fetch, so this
- * refuses an HTTP error, a non-array body, or a count under half the latest cache's. The file
+ * refuses an HTTP error, a non-array body, an empty array, or a count under half the latest
+ * cache's. The request, body included, is given up after `timeoutMs` (default 120 s). The file
  * is written to a temp name and renamed, so a failure never leaves a partial cache.
  */
 export async function fetchPlaces(
   cfg: Config,
-  opts: { fetchImpl?: typeof fetch; today?: string } = {},
+  opts: { fetchImpl?: typeof fetch; today?: string; timeoutMs?: number } = {},
 ): Promise<{ path: string; count: number }> {
   const today = opts.today ?? new Date().toISOString().slice(0, 10);
   if (!DATE_RE.test(today)) throw new Error(`today must be YYYY-MM-DD, got "${today}"`);
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const signal = AbortSignal.timeout(timeoutMs);
+  const timedOut = () => new Error(`BTC Map did not answer within ${timeoutMs / 1000} s; nothing was written`);
 
-  const res = await fetchImpl(placesUrl(cfg.btcmapFields));
+  let res: Response;
+  try {
+    res = await fetchImpl(placesUrl(cfg.btcmapFields), { signal });
+  } catch (err) {
+    if (signal.aborted) throw timedOut();
+    throw err;
+  }
   if (res.status !== 200) {
     throw new Error(`BTC Map request failed: HTTP ${res.status} ${res.statusText}`.trim());
   }
@@ -103,10 +115,14 @@ export async function fetchPlaces(
   try {
     body = await res.json();
   } catch {
+    if (signal.aborted) throw timedOut();
     throw new Error("BTC Map response is not valid JSON; expected an array of places");
   }
   if (!Array.isArray(body)) {
     throw new Error("BTC Map response is not an array of places");
+  }
+  if (body.length === 0) {
+    throw new Error("BTC Map returned no places; refusing to write the cache");
   }
 
   const previous = latestCachePath(cfg);

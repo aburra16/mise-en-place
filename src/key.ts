@@ -28,7 +28,9 @@ export function defaultKeyPath(): string {
  *
  * Refuses, in this order: a file that is missing, not a regular file, or readable by group or
  * others (`mode & 0o077`); content that is not an `nsec1…` or `ncryptsec1…` string once
- * trimmed; a wrong passphrase; and a key whose public key is not `expectedPubkey`.
+ * trimmed; a wrong passphrase; a decoded key that is not a valid secret key (wrong length, or a
+ * scalar out of range), zeroed before the throw; and a key whose public key is not
+ * `expectedPubkey`.
  * `askPassphrase` is called only for an `ncryptsec`.
  *
  * The file is opened once and the mode is read from that descriptor, so the file that was
@@ -64,7 +66,15 @@ export async function loadKey(
   }
 
   const secret = await decodeSecret(path, text, askPassphrase);
-  const derived = getPublicKey(secret);
+  let derived: string;
+  try {
+    derived = getPublicKey(secret);
+  } catch {
+    // A payload of the wrong length or a scalar out of range decodes but cannot be a key. The
+    // library's message is not passed on (see the note at the top of this file).
+    secret.fill(0);
+    throw new Error(`${path} does not hold a valid secret key`);
+  }
   if (derived !== expectedPubkey) {
     secret.fill(0);
     throw new Error(

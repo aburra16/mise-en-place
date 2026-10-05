@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, type Config } from "../src/config.js";
 import {
   fetchPlaces,
@@ -146,6 +146,66 @@ describe("fetchPlaces", () => {
       fetchPlaces(cfg, { fetchImpl: stubFetch(200, { places: [] }), today: "2026-10-05" }),
     ).rejects.toThrow(/array/);
     expect(cacheFiles()).toEqual([]);
+  });
+
+  it("refuses an empty array, even with no earlier cache", async () => {
+    await expect(
+      fetchPlaces(cfg, { fetchImpl: stubFetch(200, []), today: "2026-10-05" }),
+    ).rejects.toThrow(/BTC Map returned no places; refusing to write the cache/);
+    expect(cacheFiles()).toEqual([]);
+  });
+
+  it("refuses an empty array when there is an earlier cache", async () => {
+    seedCache("2026-10-04", rawPlaces(1));
+    await expect(
+      fetchPlaces(cfg, { fetchImpl: stubFetch(200, []), today: "2026-10-05" }),
+    ).rejects.toThrow(/no places/);
+    expect(cacheFiles()).toEqual(["places-2026-10-04.json"]);
+  });
+
+  it("gives up after timeoutMs when BTC Map never answers, and writes nothing", async () => {
+    let signal: AbortSignal | undefined;
+    const hanging = ((_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        signal = init?.signal ?? undefined;
+        signal?.addEventListener("abort", () => reject(signal!.reason));
+      })) as typeof fetch;
+    const started = Date.now();
+
+    await expect(
+      fetchPlaces(cfg, { fetchImpl: hanging, today: "2026-10-05", timeoutMs: 50 }),
+    ).rejects.toThrow("BTC Map did not answer within 0.05 s; nothing was written");
+
+    expect(signal).toBeDefined();
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(cacheFiles()).toEqual([]);
+  });
+
+  it("gives up when the body stalls past timeoutMs", async () => {
+    const stalling = ((_input: string | URL | Request, init?: RequestInit) => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("[1,"));
+          init?.signal?.addEventListener("abort", () => controller.error(init.signal!.reason));
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    }) as typeof fetch;
+
+    await expect(
+      fetchPlaces(cfg, { fetchImpl: stalling, today: "2026-10-05", timeoutMs: 50 }),
+    ).rejects.toThrow("BTC Map did not answer within 0.05 s; nothing was written");
+    expect(cacheFiles()).toEqual([]);
+  });
+
+  it("allows 120 s by default", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await fetchPlaces(cfg, { fetchImpl: stubFetch(200, rawPlaces(1)), today: "2026-10-05" });
+      expect(timeout).toHaveBeenCalledWith(120_000);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("refuses a shrunken fetch", async () => {

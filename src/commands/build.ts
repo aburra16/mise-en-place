@@ -8,7 +8,7 @@ import { diffItems } from "../diff.js";
 import { checkHeader, fetchHeader } from "../header.js";
 import { tagValue, type Tags } from "../item.js";
 import { configIdentity } from "../manifest.js";
-import { bullets, coverageTable, duplicateList, samples, table } from "../markdown.js";
+import { bullets, codeSpan, coverageTable, duplicateList, samples, table } from "../markdown.js";
 import { selectPilot } from "../pilot.js";
 import { latestCachePath, readCache } from "../source/btcmap.js";
 import type { LiveItem, State } from "../state.js";
@@ -142,18 +142,21 @@ interface ReportInput {
   result: BuildResult;
 }
 
-/** The name in a live item's stored tags, for the report. */
-function liveName(item: LiveItem | undefined): string {
+/**
+ * `d: name` for the report, from a live item's stored tags. Both are code spans, so markdown
+ * in a name cannot garble the review before signing.
+ */
+function liveLabel(d: string, item: LiveItem | undefined): string {
+  let name: unknown;
   try {
     const tags: unknown = JSON.parse(item?.tagsJson ?? "[]");
-    const name = Array.isArray(tags)
+    name = Array.isArray(tags)
       ? (tags as unknown[]).find((t): t is string[] => Array.isArray(t) && t[0] === "name")?.[1]
       : undefined;
-    if (typeof name === "string" && name !== "") return name;
   } catch {
     // Unreadable tags read as no name; the d still identifies the item.
   }
-  return "(no name recorded)";
+  return `${codeSpan(d)}: ${typeof name === "string" && name !== "" ? codeSpan(name) : "(no name recorded)"}`;
 }
 
 function renderReport(r: ReportInput): string {
@@ -195,8 +198,7 @@ function renderReport(r: ReportInput): string {
       ? "not looked for (filtered or pilot build)"
       : bullets(
           r.deletions.map(
-            ({ d, eventIds }) =>
-              `${d}: ${liveName(r.live.get(d))} (${eventIds} event id${eventIds === 1 ? "" : "s"})`,
+            ({ d, eventIds }) => `${liveLabel(d, r.live.get(d))} (${eventIds} event id${eventIds === 1 ? "" : "s"})`,
           ),
         ),
     "",
@@ -204,7 +206,7 @@ function renderReport(r: ReportInput): string {
     "",
     "Malformed records that still name their place. They are never deleted.",
     "",
-    bullets(r.result.held.map((d) => (r.live.has(d) ? `${d}: ${liveName(r.live.get(d))} (live, kept)` : d))),
+    bullets(r.result.held.map((d) => (r.live.has(d) ? `${liveLabel(d, r.live.get(d))} (live, kept)` : codeSpan(d)))),
     "",
     "## Skipped",
     "",
