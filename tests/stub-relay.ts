@@ -20,11 +20,22 @@ export interface StubContext {
   n: number;
 }
 
+export interface StubReqContext {
+  /** Sends `["EVENT", <sub id>, ev]`. */
+  send(ev: NostrEvent): void;
+  /** Sends `["EOSE", <sub id>]`. */
+  eose(): void;
+}
+
 /**
  * A relay on an OS-assigned loopback port that hands each EVENT to `onEvent`, which decides
- * whether and how to answer. It never answers a REQ, so a read from it never finishes.
+ * whether and how to answer. A REQ goes to `onReq`; without one it is never answered, so a
+ * read from the stub never finishes.
  */
-export async function startStubRelay(onEvent: (ev: NostrEvent, ctx: StubContext) => void): Promise<StubRelay> {
+export async function startStubRelay(
+  onEvent: (ev: NostrEvent, ctx: StubContext) => void,
+  onReq?: (filters: Record<string, unknown>[], ctx: StubReqContext) => void,
+): Promise<StubRelay> {
   const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(wss, "listening");
   const { port } = wss.address() as AddressInfo;
@@ -41,6 +52,14 @@ export async function startStubRelay(onEvent: (ev: NostrEvent, ctx: StubContext)
     stub.connections++;
     socket.on("message", (data) => {
       const msg = JSON.parse(String(data)) as unknown[];
+      if (msg[0] === "REQ" && onReq !== undefined) {
+        const subId = msg[1] as string;
+        onReq(msg.slice(2) as Record<string, unknown>[], {
+          send: (ev) => socket.send(JSON.stringify(["EVENT", subId, ev])),
+          eose: () => socket.send(JSON.stringify(["EOSE", subId])),
+        });
+        return;
+      }
       if (msg[0] !== "EVENT") return;
       const ev = msg[1] as NostrEvent;
       stub.received.push(ev);

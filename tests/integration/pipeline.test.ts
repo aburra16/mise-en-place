@@ -10,7 +10,7 @@ import { build, type BuildOptions } from "../../src/commands/build.js";
 import { rebroadcastHeader } from "../../src/commands/header-rebroadcast.js";
 import { publish, type RelayPublishResult } from "../../src/commands/publish.js";
 import { sign } from "../../src/commands/sign.js";
-import { verify } from "../../src/commands/verify.js";
+import { verify, type VerifyOptions } from "../../src/commands/verify.js";
 import { loadConfig, type Config } from "../../src/config.js";
 import { fetchHeader } from "../../src/header.js";
 import { tagValue } from "../../src/item.js";
@@ -77,11 +77,12 @@ interface World {
   cfg: Config;
   state: State;
   keyPath: string;
+  secret: Uint8Array;
 }
 
 /**
  * A fresh curator key, state file and run directory. Each test signs with its own key, and
- * verify filters by author, so tests sharing the one in-memory relay never see each other.
+ * verify filters by author, so tests sharing the in-memory relays never see each other.
  */
 function newWorld(relays?: Record<string, string>): World {
   const dir = mkdtempSync(join(tmpdir(), "mise-pipeline-"));
@@ -99,7 +100,7 @@ function newWorld(relays?: Record<string, string>): World {
     paths: { data: join(dir, "data"), out: join(dir, "out"), state: join(dir, "state.sqlite") },
   };
   assertLoopback(cfg);
-  return { dir, cfg, state: openState(cfg.paths.state), keyPath };
+  return { dir, cfg, state: openState(cfg.paths.state), keyPath, secret };
 }
 
 let w: World;
@@ -155,11 +156,21 @@ type Count = "sent" | "ok" | "failed" | "skipped";
 const total = (r: Record<string, RelayPublishResult>, key: Count) =>
   Object.values(r).reduce((sum, x) => sum + x[key], 0);
 
+/** NIP-11 is never fetched in tests: by default the relays "have none", so the 500 fallback applies. */
+const noInfo = async (): Promise<unknown> => {
+  throw new Error("no NIP-11 in tests");
+};
+const withMaxLimit = (max: number) => async (): Promise<unknown> => ({ limitation: { max_limit: max } });
+
+function verifyHere(opts: VerifyOptions = {}) {
+  return verify(w.cfg, w.state, { fetchRelayInfo: noInfo, ...opts });
+}
+
 async function expectCleanVerify(inState: number): Promise<void> {
-  const result = await verify(w.cfg, w.state);
+  const result = await verifyHere();
   expect(Object.keys(result).sort()).toEqual(["dcosl", "search"]);
   for (const r of Object.values(result)) {
-    expect(r).toEqual({ onRelay: inState, inState, missing: [], extra: [], stale: [] });
+    expect(r).toEqual({ onRelay: inState, inState, missing: [], extra: [], stale: [], extraCheck: "complete" });
   }
 }
 
@@ -282,11 +293,63 @@ describe("pipeline against nak serve", () => {
     w.state.markDeleted(a, 1); // on the relay, no longer live in state
     w.state.markLive(b, "h", JSON.stringify(tagsOf(b)), "e".repeat(64), 1); // state expects another id
 
-    const result = await verify(w.cfg, w.state);
+    const result = await verifyHere();
     for (const r of Object.values(result)) {
-      expect(r).toEqual({ onRelay: 6, inState: 6, missing: ["osm-node-999"], extra: [a], stale: [b] });
+      expect(r).toEqual({
+        onRelay: 6,
+        inState: 6,
+        missing: ["osm-node-999"],
+        extra: [a],
+        stale: [b],
+        extraCheck: "complete",
+      });
     }
   });
+
+  it("verify stays exact on missing and stale when one created_at fills more than a page", async () => {
+    // One sign gives all six items the same created_at; a page of 4 cannot step past it.
+    const { runDir } = await buildAndSign(PLACES, "r1");
+    await publish(w.cfg, w.state, runDir);
+    w.state.markLive("osm-node-999", "h", "[]", "f".repeat(64), 1);
+
+    const result = await verifyHere({ fetchRelayInfo: withMaxLimit(4) });
+
+    for (const r of Object.values(result)) {
+      expect(r.error).toBeUndefined();
+      expect(r.missing).toEqual(["osm-node-999"]);
+      expect(r.stale).toEqual([]);
+      expect(r.extra).toEqual([]);
+      expect(r.onRelay).toBe(6);
+      expect(r.extraCheck).toMatch(/^incomplete: more than 4 events share created_at \d+/);
+    }
+  });
+
+  it("a d removed from the relay shows as missing in a #d batch past the first 200", async () => {
+    const many = restaurants(250);
+    const { runDir, events } = await buildAndSign(many, "r1");
+    expect(total(await publish(w.cfg, w.state, runDir), "ok")).toBe(500);
+    const ds = [...w.state.liveItems().keys()];
+    const gone = ds[230]!; // the second batch of 200
+    const goneId = events.find((e) => tagValue(e.tags, "d") === gone)!.id;
+    const deletion = finalizeEvent(
+      { kind: 5, created_at: ++clock, content: "", tags: [["e", goneId], ["k", "39999"]] },
+      w.secret,
+    );
+    for (const url of [dcoslNak.url, searchNak.url]) {
+      const relay = await connectRelay(url, 5_000);
+      try {
+        await relay.publish(deletion);
+      } finally {
+        relay.close();
+      }
+    }
+
+    const result = await verifyHere({ fetchRelayInfo: withMaxLimit(1_000) });
+
+    for (const r of Object.values(result)) {
+      expect(r).toEqual({ onRelay: 249, inState: 250, missing: [gone], extra: [], stale: [], extraCheck: "complete" });
+    }
+  }, 30_000);
 
   it("header rebroadcast copies the event byte for byte", async () => {
     const target = await startNak(TARGET_PORT);

@@ -5,7 +5,7 @@ import { census } from "./commands/census.js";
 import { rebroadcastHeader } from "./commands/header-rebroadcast.js";
 import { publish, type RelayPublishResult } from "./commands/publish.js";
 import { sign } from "./commands/sign.js";
-import { verify, type RelayVerifyResult } from "./commands/verify.js";
+import { verify, verifySummary, type RelayVerifyResult } from "./commands/verify.js";
 import { loadConfig } from "./config.js";
 import { fetchPlaces, latestCachePath } from "./source/btcmap.js";
 import { openState } from "./state.js";
@@ -22,12 +22,6 @@ function allowOptions(name: string, args: CliArgs, allowed: string[] = []): void
 function only(name: string, args: CliArgs, allowed: string[] = []): void {
   if (args.positional.length > 0) throw new Error(`${name} takes no arguments, got ${args.positional.join(" ")}`);
   allowOptions(name, args, allowed);
-}
-
-/** Up to 20 `d` values, then how many more there are. */
-function listed(ds: string[]): string {
-  const shown = ds.slice(0, 20).join(", ");
-  return ds.length > 20 ? `${shown} and ${ds.length - 20} more` : shown;
 }
 
 /** Commands by script name. Task 9 registers console. */
@@ -131,22 +125,10 @@ const commands = new Map<string, Command>([
       } finally {
         state.close();
       }
-      const problems: string[] = [];
-      for (const [name, r] of Object.entries(results)) {
-        if (r.error !== undefined) {
-          console.log(`${name}: ${r.error}`);
-          problems.push(name);
-          continue;
-        }
-        console.log(
-          `${name}: on relay ${r.onRelay}, in state ${r.inState}, ` +
-            `missing ${r.missing.length}, extra ${r.extra.length}, stale ${r.stale.length}`,
-        );
-        const lists: [string, string[]][] = [["missing", r.missing], ["extra", r.extra], ["stale", r.stale]];
-        for (const [label, ds] of lists) if (ds.length > 0) console.log(`  ${label}: ${listed(ds)}`);
-        if (lists.some(([, ds]) => ds.length > 0)) problems.push(name);
-      }
-      if (problems.length > 0) throw new Error(`relays and state do not match on ${problems.join(", ")}`);
+      const { lines, warnings, failed } = verifySummary(results);
+      for (const line of lines) console.log(line);
+      for (const warning of warnings) console.warn(`warning: ${warning}`);
+      if (failed.length > 0) throw new Error(`relays and state do not match on ${failed.join(", ")}`);
     },
   ],
   [

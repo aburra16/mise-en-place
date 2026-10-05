@@ -28,6 +28,8 @@ export interface State {
   }): void;
   markLive(d: string, contentHash: string, tagsJson: string, eventId: string, at: number): void;
   markDeleted(d: string, at: number): void;
+  /** The item's last_changed (the `at` of its latest markLive or markDeleted), live or not. */
+  lastChanged(d: string): number | undefined;
   runs(): { runId: string; relay: string; ok: number; failed: number }[];
   close(): void;
 }
@@ -107,6 +109,7 @@ export function openState(path: string): State {
   const updateDeleted = db.prepare(
     "UPDATE items SET status = 'deleted', last_changed = ? WHERE d = ?",
   );
+  const selectLastChanged = db.prepare("SELECT last_changed AS lastChanged FROM items WHERE d = ?");
   const selectRuns = db.prepare(
     `SELECT run_id AS runId, relay, SUM(ok = 1) AS ok, SUM(ok = 0) AS failed
        FROM events GROUP BY run_id, relay ORDER BY run_id, relay`,
@@ -135,6 +138,9 @@ export function openState(path: string): State {
     },
     markDeleted(d, at) {
       updateDeleted.run(at, d);
+    },
+    lastChanged(d) {
+      return (selectLastChanged.get(d) as { lastChanged: number } | undefined)?.lastChanged;
     },
     runs() {
       return selectRuns.all() as { runId: string; relay: string; ok: number; failed: number }[];

@@ -75,9 +75,10 @@ function deletion(d: string, ids: string[]): NostrEvent {
   );
 }
 
-function writeSigned(lines: unknown[]): void {
+function writeSigned(lines: unknown[], dir = runDir): void {
+  mkdirSync(dir, { recursive: true });
   writeFileSync(
-    join(runDir, "signed.jsonl"),
+    join(dir, "signed.jsonl"),
     lines.map((l) => `${typeof l === "string" ? l : JSON.stringify(l)}\n`).join(""),
   );
 }
@@ -151,6 +152,62 @@ describe("publish", () => {
 
     expect(result).toEqual({ search: { sent: 1, ok: 1, failed: 0, skipped: 0 } });
     expect(markLive).not.toHaveBeenCalled();
+  });
+
+  describe("never moves state back to an older event", () => {
+    const run2 = () => join(dir, "out", "run2");
+    const at = (created_at: number, name: string) =>
+      item("osm-node-1", secret, { created_at, tags: [["d", "osm-node-1"], ["z", COORD], ["name", name]] });
+
+    it("an older run published after a newer one is recorded but not made live", async () => {
+      const relay = await stub(acceptAll);
+      const cfg = config({ dcosl: relay.url });
+      const older = at(T, "Old name");
+      const newer = at(T + 100, "New name");
+      writeSigned([newer], run2());
+      writeSigned([older]);
+      await publish(cfg, state, run2());
+
+      const result = await publish(cfg, state, runDir);
+
+      expect(result).toEqual({ dcosl: { sent: 1, ok: 1, failed: 0, skipped: 0 } });
+      expect(state.acceptedOn(older.id, "dcosl")).toBe(true);
+      expect(state.versionsOf("osm-node-1")).toEqual([older.id, newer.id]);
+      expect(state.liveItems().get("osm-node-1")).toEqual({
+        d: "osm-node-1",
+        contentHash: contentHash(newer.tags),
+        tagsJson: JSON.stringify(newer.tags),
+        latestEventId: newer.id,
+      });
+    });
+
+    it("an older item does not bring back an item deleted after it", async () => {
+      const relay = await stub(acceptAll);
+      const cfg = config({ dcosl: relay.url });
+      const older = at(T, "Old name");
+      writeSigned([deletion("osm-node-1", ["a".repeat(64)])], run2()); // created_at T + 1
+      writeSigned([older]);
+      state.markLive("osm-node-1", "h", "[]", "a".repeat(64), T - 10);
+      await publish(cfg, state, run2());
+      expect(state.liveItems().has("osm-node-1")).toBe(false);
+
+      await publish(cfg, state, runDir);
+
+      expect(state.liveItems().has("osm-node-1")).toBe(false);
+    });
+
+    it("an older deletion does not delete a newer live version", async () => {
+      const relay = await stub(acceptAll);
+      const cfg = config({ dcosl: relay.url });
+      const newer = at(T + 100, "New name");
+      writeSigned([newer], run2());
+      writeSigned([deletion("osm-node-1", ["a".repeat(64)])]); // created_at T + 1
+      await publish(cfg, state, run2());
+
+      await publish(cfg, state, runDir);
+
+      expect(state.liveItems().get("osm-node-1")?.latestEventId).toBe(newer.id);
+    });
   });
 
   it("records each pair as pending before sending it", async () => {
@@ -306,6 +363,17 @@ describe("publish", () => {
       ["a line that is not JSON", () => [good(), "{nope"], /line 2: not valid JSON/],
       ["a line that is not an event", () => [{ kind: 39999 }], /line 1: not a nostr event/],
       ["an item without a d tag", () => [finalizeEvent({ kind: 39999, created_at: T, content: "", tags: [["z", COORD]] }, secret)], /line 1: .*d tag/],
+      [
+        "an item for another list",
+        () => [good(), item("osm-node-2", secret, { tags: [["d", "osm-node-2"], ["z", `39998:${"a".repeat(64)}:other-list`]] })],
+        /line 2: .*z is 39998:a{64}:other-list, not the header 39998:/,
+      ],
+      ["an item without a z tag", () => [item("osm-node-2", secret, { tags: [["d", "osm-node-2"]] })], /line 1: .*exactly one z tag/],
+      [
+        "an item with two z tags",
+        () => [item("osm-node-2", secret, { tags: [["d", "osm-node-2"], ["z", COORD], ["z", COORD]] })],
+        /line 1: .*exactly one z tag/,
+      ],
       [
         "a deletion without an a tag for the curator's item",
         () => [finalizeEvent({ kind: 5, created_at: T, content: "", tags: [["e", "c".repeat(64)], ["k", "39999"]] }, secret)],

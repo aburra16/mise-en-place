@@ -93,10 +93,12 @@ function deletedD(ev: NostrEvent, curatorPubkey: string): string | undefined {
 /**
  * Reads `signed.jsonl` and checks every line before anything is sent: a nostr event, kind
  * 39999 or 5, signed by the curator with a valid id and signature, not repeated, items before
- * deletions, an item with a `d` tag and a deletion with an `a` tag naming the curator's item.
- * The first bad line stops the publish, so a run is never half sent because of its own file.
+ * deletions, an item with a `d` tag and exactly one `z` naming the configured header, and a
+ * deletion with an `a` tag naming the curator's item. The first bad line stops the publish,
+ * so a run is never half sent because of its own file.
  */
-function readSigned(path: string, curatorPubkey: string): Outgoing[] {
+function readSigned(path: string, cfg: Pick<Config, "curatorPubkey" | "headerCoordinate">): Outgoing[] {
+  const { curatorPubkey, headerCoordinate } = cfg;
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -141,7 +143,11 @@ function readSigned(path: string, curatorPubkey: string): Outgoing[] {
     }
     if (deletionSeen) return bad("an item after a deletion; deletions go last");
     const d = tagValue(ev.tags, "d") ?? "";
-    return { event: ev, d: d !== "" ? d : bad("an item needs a d tag") };
+    if (d === "") return bad("an item needs a d tag");
+    const z = ev.tags.filter((t) => t[0] === "z").map((t) => t[1] ?? "");
+    if (z.length !== 1) return bad(`an item needs exactly one z tag, the header ${headerCoordinate}`);
+    if (z[0] !== headerCoordinate) return bad(`z is ${z[0]}, not the header ${headerCoordinate}`);
+    return { event: ev, d };
   });
 }
 
@@ -182,8 +188,14 @@ function record(run: Run, relay: string, { event, d }: Outgoing, res: { ok: bool
   });
 }
 
-/** What an event's first acceptance on any relay means for the item. */
+/**
+ * What an event's first acceptance on any relay means for the item. Nothing, when a newer
+ * event already moved the item (an older run published after a newer one): state never goes
+ * back in time, and the relays keep the newer version too.
+ */
 function applyFirstOk(state: State, { event, d }: Outgoing): void {
+  const changedAt = state.lastChanged(d);
+  if (changedAt !== undefined && changedAt > event.created_at) return;
   if (event.kind === ITEM_KIND) {
     state.markLive(d, contentHash(event.tags), JSON.stringify(event.tags), event.id, event.created_at);
   } else {
@@ -250,10 +262,11 @@ async function publishTo(run: Run, name: string): Promise<RelayPublishResult> {
  * Every line is checked first (see readSigned) and one bad line sends nothing. Then each
  * relay gets its own connection and throttle loop at `publish.eventsPerSecond`, all relays at
  * once, file order kept within each, so items go before deletions. Pairs the relay already
- * accepted are skipped, which makes a rerun resume an interrupted publish. A `rate-limited`
- * reply waits `backoffMs` and is retried once. A relay that cannot be reached, or drops the
- * connection, gets an `error` and the others carry on. Anything else that throws (the
- * `onEventSent` hook, the state store) stops every relay and propagates.
+ * accepted are skipped, which makes a rerun resume an interrupted publish. Every result is
+ * recorded, but an event older than the item's last change never moves it (applyFirstOk).
+ * A `rate-limited` reply waits `backoffMs` and is retried once. A relay that cannot be
+ * reached, or drops the connection, gets an `error` and the others carry on. Anything else
+ * that throws (the `onEventSent` hook, the state store) stops every relay and propagates.
  */
 export async function publish(
   cfg: Config,
@@ -268,7 +281,7 @@ export async function publish(
     cfg,
     state,
     runId: basename(runDir),
-    outgoing: readSigned(join(runDir, "signed.jsonl"), cfg.curatorPubkey),
+    outgoing: readSigned(join(runDir, "signed.jsonl"), cfg),
     backoffMs: opts.backoffMs ?? DEFAULT_BACKOFF_MS,
     onEventSent: opts.onEventSent,
     finished: 0,

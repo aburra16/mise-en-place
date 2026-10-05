@@ -92,6 +92,14 @@ describe("items", () => {
     expect(state.liveItems().get("osm-node-1")?.latestEventId).toBe("e3");
   });
 
+  it("lastChanged is the time of the latest markLive or markDeleted, live or not", () => {
+    expect(state.lastChanged("osm-node-1")).toBeUndefined();
+    state.markLive("osm-node-1", "hash-a", "[]", "e1", 100);
+    expect(state.lastChanged("osm-node-1")).toBe(100);
+    state.markDeleted("osm-node-1", 150);
+    expect(state.lastChanged("osm-node-1")).toBe(150);
+  });
+
   it("markDeleted on an unknown d does nothing", () => {
     state.markDeleted("osm-node-404", 100);
 

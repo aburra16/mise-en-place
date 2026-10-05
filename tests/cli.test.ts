@@ -242,7 +242,9 @@ describe("cli", () => {
     /** A signed run of one item by `secret`, which the config names as the curator. */
     function signedRun() {
       mkdirSync(runDir(), { recursive: true });
-      const ev = finalizeEvent({ kind: 39999, created_at: 1_700_000_000, content: "", tags: [["d", "osm-node-1"]] }, secret);
+      const coord = (JSON.parse(readFileSync("config.json", "utf8")) as { headerCoordinate: string }).headerCoordinate;
+      const tags = [["d", "osm-node-1"], ["z", coord]];
+      const ev = finalizeEvent({ kind: 39999, created_at: 1_700_000_000, content: "", tags }, secret);
       writeFileSync(join(runDir(), "signed.jsonl"), `${JSON.stringify(ev)}\n`);
     }
 
