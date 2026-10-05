@@ -349,8 +349,10 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
   });
   if (refusal !== undefined) throw new Error(`${refusal}${writeRefusedList(cfg, refusal, diff.gone, live)}`);
 
-  // Only a build that goes on warns. Earlier runs are never refused over: this build diffs against
-  // what state records as published, so it builds again whatever they left unpublished.
+  // Only a build that goes on warns, and earlier runs are never refused over. This build diffs
+  // against state, where an item goes live on its first OK from any relay (publish applyFirstOk).
+  // So a run never signed, or accepted by no relay, is built again here; a run some relays accepted
+  // and others did not is not, and only `publish --relays` finishes it.
   const warn = opts.onWarning ?? ((line: string) => process.stderr.write(`${line}\n`));
   for (const line of earlierRunWarnings(cfg, state)) warn(line);
 

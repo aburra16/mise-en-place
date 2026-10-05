@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { NostrEvent } from "nostr-tools/core";
@@ -9,6 +9,7 @@ import { census } from "../src/commands/census.js";
 import { headerAuthor, loadConfig, type Config } from "../src/config.js";
 import type { Unsigned } from "../src/deletion.js";
 import { contentHash } from "../src/diff.js";
+import { earlierRunWarnings } from "../src/earlier-runs.js";
 import { checkHeader, fetchHeader } from "../src/header.js";
 import type { Tags } from "../src/item.js";
 import { codeSpan } from "../src/markdown.js";
@@ -834,7 +835,8 @@ describe("build", () => {
       await run({ runId: "r2" });
 
       expect(warnings).toEqual([
-        "warning: earlier run r1 is not fully published: not published to search: 3 of 6 events missing",
+        "warning: earlier run r1 is not fully published: not published to search: 3 of 6 events missing; " +
+          "finish it with: npm run publish -- r1 --relays search",
       ]);
     });
 
@@ -848,7 +850,8 @@ describe("build", () => {
 
       expect(warnings).toEqual([
         "warning: earlier run r1 is not fully published: " +
-          "not published to dcosl: 4 of 4 events missing; not published to search: 3 of 4 events missing",
+          "not published to dcosl: 4 of 4 events missing; not published to search: 3 of 4 events missing; " +
+          "finish it with: npm run publish -- r1 --relays dcosl,search",
       ]);
     });
 
@@ -863,7 +866,10 @@ describe("build", () => {
 
       await run({ runId: "r2" });
 
-      expect(warnings).toEqual(["warning: earlier run r1 is not fully published: not published to search: 1 of 2 events missing"]);
+      expect(warnings).toEqual([
+        "warning: earlier run r1 is not fully published: not published to search: 1 of 2 events missing; " +
+          "finish it with: npm run publish -- r1 --relays search",
+      ]);
     });
 
     it("checks the relays recorded in the run's manifest, not the ones configured now", async () => {
@@ -880,7 +886,10 @@ describe("build", () => {
 
       await run({ runId: "r2" });
 
-      expect(warnings).toEqual(["warning: earlier run r1 is not fully published: not published to alpha: 2 of 2 events missing"]);
+      expect(warnings).toEqual([
+        "warning: earlier run r1 is not fully published: not published to alpha: 2 of 2 events missing; " +
+          "finish it with: npm run publish -- r1 --relays alpha",
+      ]);
     });
 
     it("is complete once the manifest's one relay has everything, though others are configured", async () => {
@@ -906,7 +915,10 @@ describe("build", () => {
 
       await run({ runId: "r2" });
 
-      expect(warnings).toEqual(["warning: earlier run r1 is not fully published: not published to search: 1 of 1 events missing"]);
+      expect(warnings).toEqual([
+        "warning: earlier run r1 is not fully published: not published to search: 1 of 1 events missing; " +
+          "finish it with: npm run publish -- r1 --relays search",
+      ]);
     });
 
     it("warns once per run, in run id order, and counts each run on its own", async () => {
@@ -950,6 +962,47 @@ describe("build", () => {
 
       expect(warnings).toEqual(["warning: could not check earlier run r1: signed.jsonl line 2 is not a nostr event with an id"]);
       expect(existsSync(second.runDir)).toBe(true);
+    });
+
+    describe("a directory the scan cannot read", () => {
+      let locked: string | undefined;
+      afterEach(() => {
+        if (locked !== undefined) chmodSync(locked, 0o755); // so the temp dir can be removed
+        locked = undefined;
+      });
+
+      // Mode 000 does not stop root, which is how some CI containers run.
+      it.skipIf(process.getuid?.() === 0 || process.platform === "win32")(
+        "reports a run dir that cannot be read and builds anyway",
+        async () => {
+          fakeRun("a-locked", { "manifest.json": "{}", "unsigned.jsonl": "x\n" });
+          locked = outOf("a-locked");
+          chmodSync(locked, 0o000);
+          fakeRun("b-unsigned", { "manifest.json": "{}", "unsigned.jsonl": "x\n" });
+          writeCache(restaurants(1));
+
+          const result = await run({ runId: "r1" });
+
+          expect(warnings).toHaveLength(2);
+          expect(warnings[0]).toMatch(/^warning: could not check earlier run a-locked: EACCES/);
+          expect(warnings[1]).toBe("warning: earlier run b-unsigned is not fully published: not signed");
+          expect(existsSync(result.runDir)).toBe(true);
+        },
+      );
+
+      it("reports an out dir it cannot list as one warning instead of throwing", () => {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(cfg.paths.out, "a file where the out directory should be");
+
+        const lines = earlierRunWarnings(cfg, state);
+
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toMatch(new RegExp(`^warning: could not scan ${cfg.paths.out} for earlier runs: ENOTDIR`));
+      });
+
+      it("still treats a missing out dir as no earlier runs", () => {
+        expect(earlierRunWarnings(cfg, state)).toEqual([]);
+      });
     });
 
     it("says nothing when the build is refused, since no run is written", async () => {
