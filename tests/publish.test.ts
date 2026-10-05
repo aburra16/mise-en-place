@@ -310,6 +310,117 @@ describe("publish", () => {
     expect(counts).toEqual([1, 2, 3, 4]);
   });
 
+  describe("progress", () => {
+    it("reports every progressEvery results per relay, as <relay>: <n>/<total>", async () => {
+      const [a, b] = [await stub(acceptAll), await stub(acceptAll)];
+      writeSigned(["osm-node-1", "osm-node-2", "osm-node-3", "osm-node-4", "osm-node-5"].map((d) => item(d)));
+      const lines: string[] = [];
+
+      await publish(config({ dcosl: a.url, search: b.url }), state, runDir, undefined, {
+        progressEvery: 2,
+        onProgress: (line) => lines.push(line),
+      });
+
+      expect(lines.filter((l) => l.startsWith("dcosl"))).toEqual(["dcosl: 2/5", "dcosl: 4/5"]);
+      expect(lines.filter((l) => l.startsWith("search"))).toEqual(["search: 2/5", "search: 4/5"]);
+    });
+
+    it("counts only the events this call sends, not those a relay already accepted", async () => {
+      const relay = await stub(acceptAll);
+      const events = ["osm-node-1", "osm-node-2", "osm-node-3", "osm-node-4"].map((d) => item(d));
+      writeSigned(events);
+      state.recordResult({
+        eventId: events[0]!.id, d: "osm-node-1", kind: 39999, createdAt: T, runId: "run1", relay: "dcosl", ok: true, message: "",
+      });
+      const lines: string[] = [];
+
+      await publish(config({ dcosl: relay.url }), state, runDir, undefined, {
+        progressEvery: 1,
+        onProgress: (line) => lines.push(line),
+      });
+
+      expect(lines).toEqual(["dcosl: 1/3", "dcosl: 2/3", "dcosl: 3/3"]);
+    });
+
+    it("writes to stderr every 500 results by default", async () => {
+      const relay = await stub(acceptAll);
+      writeSigned(Array.from({ length: 501 }, (_, i) => item(`osm-node-${i}`)));
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        await publish(config({ dcosl: relay.url }, { eventsPerSecond: 1_000_000 }), state, runDir);
+        expect(stderr.mock.calls.map(([chunk]) => String(chunk))).toEqual(["dcosl: 500/501\n"]);
+      } finally {
+        stderr.mockRestore();
+      }
+    }, 20_000);
+  });
+
+  describe("a relay that stops answering", () => {
+    it("is dropped after timeoutBreaker timeouts in a row, with an error, and the run stays resumable", async () => {
+      let answer = false;
+      const relay = await stub((_, ctx) => {
+        if (answer) ctx.reply(true, "");
+      });
+      const events = ["osm-node-1", "osm-node-2", "osm-node-3", "osm-node-4", "osm-node-5", "osm-node-6"].map((d) => item(d));
+      writeSigned(events);
+      const cfg = config({ dcosl: relay.url }, { okTimeoutMs: 50 });
+
+      const first = await publish(cfg, state, runDir, undefined, { timeoutBreaker: 3 });
+
+      expect(first.dcosl).toMatchObject({ sent: 3, ok: 0, failed: 3, skipped: 0 });
+      expect(first.dcosl!.error).toMatch(
+        /^ws:\/\/127\.0\.0\.1:\d+\/? did not answer 3 events in a row within 0\.05 s each; gave up after 3 events$/,
+      );
+      expect(relay.received).toHaveLength(3);
+      expect(state.runs()).toEqual([{ runId: "run1", relay: "dcosl", ok: 0, failed: 3 }]);
+      expect(state.liveItems().size).toBe(0);
+
+      answer = true;
+      const second = await publish(cfg, state, runDir, undefined, { timeoutBreaker: 3 });
+
+      expect(second.dcosl).toEqual({ sent: 6, ok: 6, failed: 0, skipped: 0 });
+      expect(state.liveItems().size).toBe(6);
+    });
+
+    it("is kept while an answer breaks the run of timeouts", async () => {
+      // Answers every third event, so never three timeouts in a row.
+      const relay = await stub((_, ctx) => {
+        if (ctx.n % 3 === 0) ctx.reply(true, "");
+      });
+      writeSigned(["osm-node-1", "osm-node-2", "osm-node-3", "osm-node-4", "osm-node-5", "osm-node-6"].map((d) => item(d)));
+
+      const result = await publish(config({ dcosl: relay.url }, { okTimeoutMs: 50 }), state, runDir, undefined, {
+        timeoutBreaker: 3,
+      });
+
+      expect(result.dcosl).toEqual({ sent: 6, ok: 2, failed: 4, skipped: 0 });
+    });
+
+    it("does not stop the other relays", async () => {
+      const silent = await stub(() => {});
+      const good = await stub(acceptAll);
+      writeSigned(["osm-node-1", "osm-node-2", "osm-node-3"].map((d) => item(d)));
+
+      const result = await publish(config({ dcosl: silent.url, search: good.url }, { okTimeoutMs: 50 }), state, runDir, undefined, {
+        timeoutBreaker: 2,
+      });
+
+      expect(result.dcosl).toMatchObject({ sent: 2, failed: 2, error: expect.stringMatching(/did not answer 2 events in a row/) });
+      expect(result.search).toEqual({ sent: 3, ok: 3, failed: 0, skipped: 0 });
+    });
+
+    it("gives up after 20 timeouts in a row by default", async () => {
+      const relay = await stub(() => {});
+      writeSigned(Array.from({ length: 21 }, (_, i) => item(`osm-node-${i}`)));
+
+      const result = await publish(config({ dcosl: relay.url }, { okTimeoutMs: 20 }), state, runDir);
+
+      expect(result.dcosl).toMatchObject({ sent: 20, failed: 20 });
+      expect(result.dcosl!.error).toMatch(/did not answer 20 events in a row/);
+      expect(relay.received).toHaveLength(20);
+    }, 20_000);
+  });
+
   it("reports a relay it cannot reach, records nothing for it, and still finishes the others", async () => {
     const relay = await stub(acceptAll);
     writeSigned([item("osm-node-1")]);

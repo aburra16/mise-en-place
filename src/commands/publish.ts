@@ -14,7 +14,11 @@ const ITEM_KIND = 39999;
 const DELETION_KIND = 5;
 const PENDING = "pending";
 const RATE_LIMITED = "rate-limited";
+/** The message nostr-tools rejects a publish with when no OK came within the timeout. */
+const TIMED_OUT = "publish timed out";
 const DEFAULT_BACKOFF_MS = 30_000;
+const DEFAULT_PROGRESS_EVERY = 500;
+const DEFAULT_TIMEOUT_BREAKER = 20;
 
 export interface PublishOptions {
   /**
@@ -25,6 +29,15 @@ export interface PublishOptions {
   onEventSent?: (n: number) => void;
   /** The wait after a `rate-limited` reply before the one retry. Defaults to 30 s. */
   backoffMs?: number;
+  /** A progress line goes out after every this many results recorded on a relay. Defaults to 500. */
+  progressEvery?: number;
+  /** Takes each progress line, `<relay>: <n>/<total>`. Defaults to a line on stderr. */
+  onProgress?: (line: string) => void;
+  /**
+   * A relay is given up on, as if it had dropped the connection, after this many
+   * `publish timed out` results in a row. Defaults to 20.
+   */
+  timeoutBreaker?: number;
 }
 
 export interface RelayPublishResult {
@@ -50,6 +63,9 @@ interface Run {
   runId: string;
   outgoing: Outgoing[];
   backoffMs: number;
+  progressEvery: number;
+  onProgress: (line: string) => void;
+  timeoutBreaker: number;
   onEventSent?: (n: number) => void;
   /** Pairs finished so far, across relays. */
   finished: number;
@@ -210,6 +226,11 @@ function applyFirstOk(state: State, { event, d }: Outgoing): void {
  * crash in between never hides a version from a later deletion. An item becomes live (or a
  * deletion's item deleted) on the event's first OK on any relay, and that happens before the
  * OK is recorded: if the process dies in between, the pair is resent and applied again.
+ *
+ * Every `progressEvery` results a line `<relay>: <n>/<total>` goes to `onProgress`, counting
+ * the events this call sends. A relay that drops the connection, or lets `timeoutBreaker`
+ * events in a row time out, is given up on with an `error`; what it did not accept is sent
+ * again by the next publish of the run.
  */
 async function publishTo(run: Run, name: string): Promise<RelayPublishResult> {
   const { cfg, state } = run;
@@ -227,6 +248,7 @@ async function publishTo(run: Run, name: string): Promise<RelayPublishResult> {
   try {
     const signal = run.stop.signal;
     const pace = throttle(cfg.publish.eventsPerSecond, signal);
+    let timeoutsInARow = 0;
     for (const out of todo) {
       await pace();
       if (signal.aborted) break;
@@ -245,9 +267,17 @@ async function publishTo(run: Run, name: string): Promise<RelayPublishResult> {
       if (res.ok) result.ok++;
       else result.failed++;
       run.onEventSent?.(++run.finished);
+      if (result.sent % run.progressEvery === 0) run.onProgress(`${name}: ${result.sent}/${todo.length}`);
+      const events = `${result.sent} event${result.sent === 1 ? "" : "s"}`;
       if (!res.ok && !relay.connected) {
-        const events = `${result.sent} event${result.sent === 1 ? "" : "s"}`;
         result.error = `lost the connection to ${url} after ${events} (${res.message})`;
+        break;
+      }
+      timeoutsInARow = !res.ok && res.message === TIMED_OUT ? timeoutsInARow + 1 : 0;
+      if (timeoutsInARow >= run.timeoutBreaker) {
+        result.error =
+          `${url} did not answer ${timeoutsInARow} events in a row within ` +
+          `${cfg.publish.okTimeoutMs / 1000} s each; gave up after ${events}`;
         break;
       }
     }
@@ -267,8 +297,9 @@ async function publishTo(run: Run, name: string): Promise<RelayPublishResult> {
  * accepted are skipped, which makes a rerun resume an interrupted publish. Every result is
  * recorded, but an event older than the item's last change never moves it (applyFirstOk).
  * A `rate-limited` reply waits `backoffMs` and is retried once. A relay that cannot be
- * reached, or drops the connection, gets an `error` and the others carry on. Anything else
- * that throws (the `onEventSent` hook, the state store) stops every relay and propagates.
+ * reached, drops the connection, or times out `timeoutBreaker` events in a row gets an `error`
+ * and the others carry on. Progress goes to stderr (see publishTo). Anything else that throws
+ * (the `onEventSent` hook, the state store) stops every relay and propagates.
  */
 export async function publish(
   cfg: Config,
@@ -286,6 +317,9 @@ export async function publish(
     runId: basename(runDir),
     outgoing: readSigned(join(runDir, "signed.jsonl"), cfg),
     backoffMs: opts.backoffMs ?? DEFAULT_BACKOFF_MS,
+    progressEvery: opts.progressEvery ?? DEFAULT_PROGRESS_EVERY,
+    onProgress: opts.onProgress ?? ((line) => process.stderr.write(`${line}\n`)),
+    timeoutBreaker: opts.timeoutBreaker ?? DEFAULT_TIMEOUT_BREAKER,
     onEventSent: opts.onEventSent,
     finished: 0,
     stop: new AbortController(),
