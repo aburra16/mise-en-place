@@ -8,6 +8,7 @@ import { publish } from "../src/commands/publish.js";
 import { loadConfig, type Config } from "../src/config.js";
 import { contentHash } from "../src/diff.js";
 import { openState, type State } from "../src/state.js";
+import { writeManifest } from "./run-manifest.js";
 import { startStubRelay, type StubContext, type StubRelay } from "./stub-relay.js";
 
 // Every relay here is a stub on loopback or the refused port 9: nothing leaves this machine.
@@ -45,8 +46,9 @@ async function stub(onEvent: (ev: NostrEvent, ctx: StubContext) => void): Promis
 
 const acceptAll = (_: NostrEvent, ctx: StubContext) => ctx.reply(true, "");
 
+/** A config for `relays`, with the manifest.json build would write for it in run1 and run2. */
 function config(relays: Record<string, string>, publishCfg: Partial<Config["publish"]> = {}): Config {
-  return {
+  const cfg: Config = {
     ...loadConfig("config.json"),
     curatorPubkey: pubkey,
     relays,
@@ -54,6 +56,8 @@ function config(relays: Record<string, string>, publishCfg: Partial<Config["publ
     publish: { eventsPerSecond: 1000, okTimeoutMs: 2_000, ...publishCfg },
     paths: { data: join(dir, "data"), out: join(dir, "out"), state: ":memory:" },
   };
+  for (const run of ["run1", "run2"]) writeManifest(join(dir, "out", run), cfg);
+  return cfg;
 }
 
 function item(d: string, key = secret, over: Partial<Parameters<typeof finalizeEvent>[0]> = {}): NostrEvent {
@@ -335,6 +339,18 @@ describe("publish", () => {
     expect(state.runs()).toEqual([{ runId: "run1", relay: "dcosl", ok: 0, failed: 1 }]);
   });
 
+  it("accepts a manifest that lists the same relays in another order", async () => {
+    const [a, b] = [await stub(acceptAll), await stub(acceptAll)];
+    writeSigned([item("osm-node-1")]);
+    const cfg = config({ dcosl: a.url, search: b.url });
+    writeManifest(runDir, cfg, { relays: { search: b.url, dcosl: a.url } });
+
+    const result = await publish(cfg, state, runDir);
+
+    expect(result.dcosl).toEqual({ sent: 1, ok: 1, failed: 0, skipped: 0 });
+    expect(result.search).toEqual({ sent: 1, ok: 1, failed: 0, skipped: 0 });
+  });
+
   it("does not connect to a relay that already accepted every event", async () => {
     const relay = await stub(acceptAll);
     writeSigned([item("osm-node-1")]);
@@ -404,6 +420,30 @@ describe("publish", () => {
       );
       expect(relay.connections).toBe(0);
       expect(state.runs()).toEqual([]);
+    });
+
+    it("a run built for other relays, naming the field", async () => {
+      const relay = await stub(acceptAll);
+      writeSigned([good()]);
+      const cfg = config({ dcosl: relay.url });
+      writeManifest(runDir, cfg, { relays: { dcosl: relay.url, search: "ws://127.0.0.1:9" } });
+      const recordResult = vi.spyOn(state, "recordResult");
+
+      await expect(publish(cfg, state, runDir)).rejects.toThrow(
+        /built with another config: relays is \{"dcosl":"ws:\/\/127\.0\.0\.1:\d+","search":"ws:\/\/127\.0\.0\.1:9"\} in .*manifest\.json/,
+      );
+      expect(relay.connections).toBe(0);
+      expect(recordResult).not.toHaveBeenCalled();
+    });
+
+    it("a run with no manifest", async () => {
+      const relay = await stub(acceptAll);
+      writeSigned([good()]);
+      const cfg = config({ dcosl: relay.url });
+      rmSync(join(runDir, "manifest.json"));
+
+      await expect(publish(cfg, state, runDir)).rejects.toThrow(/manifest\.json not found/);
+      expect(relay.connections).toBe(0);
     });
 
     it("a run that is not signed yet", async () => {

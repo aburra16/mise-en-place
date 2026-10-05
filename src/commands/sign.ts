@@ -4,6 +4,7 @@ import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import type { Config } from "../config.js";
 import type { Unsigned } from "../deletion.js";
 import { defaultKeyPath, loadKey, promptPassphrase } from "../key.js";
+import { checkRunConfig } from "../manifest.js";
 
 export interface SignOptions {
   /** The key file. Defaults to `$MISE_KEY_FILE`, else `~/.config/mise-en-place/curator.key`. */
@@ -72,9 +73,9 @@ function readUnsigned(path: string): Unsigned[] {
  * Signs `<runDir>/unsigned.jsonl` into `<runDir>/signed.jsonl` with the curator key, the only
  * place the key is ever loaded.
  *
- * Everything that can be checked without the key is checked first (the run is unsigned, has no
- * signed.jsonl yet, and holds only kind 39999 and 5 lines), so a bad run never asks for a
- * passphrase. The key must derive `cfg.curatorPubkey` (`loadKey` checks). Every event gets one
+ * Everything that can be checked without the key is checked first (the run was built with this
+ * config, has no signed.jsonl yet, and holds only kind 39999 and 5 lines), so a bad run never
+ * asks for a passphrase. The key must derive `cfg.curatorPubkey` (`loadKey` checks). Every event gets one
  * `created_at`, read when signing starts, and the tags exactly as built. The key is zeroed as
  * soon as the last event is signed, and the file appears only whole (temp file, then rename).
  * Returns the pubkey the events were signed with.
@@ -84,6 +85,7 @@ export async function sign(
   runDir: string,
   opts: SignOptions = {},
 ): Promise<{ signed: number; pubkey: string }> {
+  checkRunConfig(cfg, runDir);
   const unsignedPath = join(runDir, "unsigned.jsonl");
   const signedPath = join(runDir, "signed.jsonl");
   const refuseOverwrite = (): void => {

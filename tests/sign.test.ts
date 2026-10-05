@@ -11,6 +11,7 @@ import { sign } from "../src/commands/sign.js";
 import { loadConfig, type Config } from "../src/config.js";
 import type { Unsigned } from "../src/deletion.js";
 import { defaultKeyPath, loadKey, promptPassphrase } from "../src/key.js";
+import { writeManifest } from "./run-manifest.js";
 
 // Wraps loadKey so a test can reach the array `sign` was handed and check it is zeroed.
 vi.mock("../src/key.js", async (importOriginal) => {
@@ -246,6 +247,7 @@ describe("sign", () => {
     cfg = { ...loadConfig("config.json"), curatorPubkey: pubkey, paths: { data: dir, out: join(dir, "out"), state: ":memory:" } };
     runDir = join(dir, "out", "run1");
     mkdirSync(runDir, { recursive: true });
+    writeManifest(runDir, cfg);
     writeKey(nsec);
   });
 
@@ -293,7 +295,7 @@ describe("sign", () => {
   it("leaves no temp file behind", async () => {
     writeUnsigned([item("osm-node-1")]);
     await sign(cfg, runDir, { keyPath });
-    expect(readdirSync(runDir).sort()).toEqual(["signed.jsonl", "unsigned.jsonl"]);
+    expect(readdirSync(runDir).sort()).toEqual(["manifest.json", "signed.jsonl", "unsigned.jsonl"]);
   });
 
   it("signs with an ncryptsec key and the passphrase it is given", async () => {
@@ -391,11 +393,55 @@ describe("sign", () => {
   it("writes nothing when the key does not match the config", async () => {
     writeUnsigned([item("osm-node-1")]);
     const other = { ...cfg, curatorPubkey: getPublicKey(generateSecretKey()) };
+    writeManifest(runDir, other); // built for that config, so only the key can be wrong
     const message = await failure(() => sign(other, runDir, { keyPath }));
     expect(message).toMatch(/does not match/);
     expectNoSecret(message);
     expect(existsSync(signedPath())).toBe(false);
     expect(existsSync(`${signedPath()}.tmp`)).toBe(false);
+  });
+
+  describe("refuses a run built with another config, before loading the key", () => {
+    const refused = async (why: RegExp) => {
+      writeUnsigned([item("osm-node-1")]);
+      const message = await failure(() => sign(cfg, runDir, noKeyOpts()));
+      expect(message).toMatch(why);
+      expect(existsSync(signedPath())).toBe(false);
+      expect(vi.mocked(loadKey)).not.toHaveBeenCalled();
+      return message;
+    };
+
+    it("a manifest whose curatorPubkey differs, naming the field and both values", async () => {
+      writeManifest(runDir, cfg, { curatorPubkey: "c".repeat(64) });
+      const message = await refused(/curatorPubkey/);
+      expect(message).toContain("c".repeat(64));
+      expect(message).toContain(pubkey);
+      expect(message).toContain(join(runDir, "manifest.json"));
+    });
+
+    it.each([
+      ["headerCoordinate", `39998:${"d".repeat(64)}:other-list`],
+      ["relays", { dcosl: "ws://127.0.0.1:9" }],
+      ["statePath", "state/rehearsal/state.sqlite"],
+    ])("a manifest whose %s differs", async (field, value) => {
+      writeManifest(runDir, cfg, { [field]: value });
+      await refused(new RegExp(`\\b${field}\\b`));
+    });
+
+    it("a run with no manifest", async () => {
+      rmSync(join(runDir, "manifest.json"));
+      await refused(/manifest\.json not found/);
+    });
+
+    it("a manifest with no config block", async () => {
+      writeFileSync(join(runDir, "manifest.json"), JSON.stringify({ runId: "run1" }));
+      await refused(/records no config/);
+    });
+
+    it("a manifest that is not JSON", async () => {
+      writeFileSync(join(runDir, "manifest.json"), "{nope");
+      await refused(/manifest\.json is not valid JSON/);
+    });
   });
 
   it("refuses a clock that does not return whole seconds", async () => {

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { headerAuthor, loadConfig } from "../src/config.js";
+import { headerAuthor, loadConfig, type Config } from "../src/config.js";
 
 const COORDINATE =
   "39998:b83a28b7e4e5d20bd960c5faeb6625f95529166b8bdb045d42634a2f35919450:food-and-drink-places";
@@ -135,6 +135,18 @@ describe("loadConfig field checks", () => {
     // Same scope and fields as the real config, so a rehearsal exercises the real mapping.
     expect(cfg.scope).toEqual(base().scope);
     expect(cfg.btcmapFields).toEqual(base().btcmapFields);
+  });
+
+  it("keeps every rehearsal path under state/rehearsal/, apart from the real data, out and state", () => {
+    const example = JSON.parse(readFileSync("config.rehearsal.example.json", "utf8")) as Config;
+    expect(example.paths).toEqual({
+      data: "state/rehearsal/data",
+      out: "state/rehearsal/out",
+      state: "state/rehearsal/state.sqlite",
+    });
+    for (const path of Object.values(example.paths)) expect(path.startsWith("state/rehearsal/")).toBe(true);
+    for (const key of ["data", "out", "state"] as const) expect(example.paths[key]).not.toBe(base().paths[key]);
+    expect(example.relays).toEqual({ local: "ws://localhost:10547" });
   });
 });
 

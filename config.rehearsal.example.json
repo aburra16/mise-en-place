@@ -19,5 +19,5 @@
   "publish": { "eventsPerSecond": 5, "okTimeoutMs": 10000 },
   "deletionGuardFraction": 0.02,
   "pilotSize": 150,
-  "paths": { "data": "data", "out": "out", "state": "state/rehearsal.sqlite" }
+  "paths": { "data": "state/rehearsal/data", "out": "state/rehearsal/out", "state": "state/rehearsal/state.sqlite" }
 }

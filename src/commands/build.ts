@@ -7,6 +7,7 @@ import { deletionFor, type Unsigned } from "../deletion.js";
 import { diffItems } from "../diff.js";
 import { checkHeader, fetchHeader } from "../header.js";
 import { tagValue, type Tags } from "../item.js";
+import { configIdentity } from "../manifest.js";
 import { bullets, coverageTable, duplicateList, samples, table } from "../markdown.js";
 import { selectPilot } from "../pilot.js";
 import { latestCachePath, readCache } from "../source/btcmap.js";
@@ -272,6 +273,8 @@ export async function build(cfg: Config, state: State, opts: BuildOptions = {}):
   };
   const manifest = {
     runId,
+    // sign and publish refuse the run under any other config (checkRunConfig).
+    config: configIdentity(cfg),
     cachePath,
     headerEventId: header.id,
     options: {

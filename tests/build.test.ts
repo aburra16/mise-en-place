@@ -419,12 +419,18 @@ describe("build", () => {
     expect(existsSync(cfg.paths.out) ? readdirSync(cfg.paths.out) : []).toEqual([]);
   });
 
-  it("writes a manifest with the options, cache path, header id and counts", async () => {
+  it("writes a manifest with the config it was built for, the options, cache path, header id and counts", async () => {
     const cachePath = writeCache(FIXTURE);
     const result = await run({ runId: "r1", filter: { country: "US" }, pilot: 2 });
     const manifest = JSON.parse(readFileSync(join(result.runDir, "manifest.json"), "utf8"));
     expect(manifest).toEqual({
       runId: "r1",
+      config: {
+        headerCoordinate: cfg.headerCoordinate,
+        curatorPubkey: cfg.curatorPubkey,
+        relays: { dcosl: NO_RELAY, search: NO_RELAY },
+        statePath: ":memory:",
+      },
       cachePath,
       headerEventId: "1".repeat(64),
       options: { pilot: 2, filter: { country: "US" }, allowDeletions: false },

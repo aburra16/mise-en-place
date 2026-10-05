@@ -8,6 +8,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey, verifyEvent, type Event
 import { bytesToHex } from "nostr-tools/utils";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../src/args.js";
+import { writeManifest } from "./run-manifest.js";
 
 describe("parseArgs", () => {
   it("defaults to no options", () => {
@@ -98,6 +99,17 @@ describe("cli", () => {
   }
 
   const cliWith = (overrides: Record<string, unknown>, ...args: string[]) => cliEnv(overrides, {}, ...args);
+
+  /** The manifest.json build would write into `runDir` for the config cliEnv writes, curated by `curatorPubkey`. */
+  function manifestFor(runDir: string, curatorPubkey: string): void {
+    const base = JSON.parse(readFileSync("config.json", "utf8")) as { headerCoordinate: string };
+    writeManifest(runDir, {
+      headerCoordinate: base.headerCoordinate,
+      curatorPubkey,
+      relays: { dcosl: "ws://127.0.0.1:9", search: "ws://127.0.0.1:9" },
+      paths: { state: join(dir, "state.sqlite") },
+    });
+  }
   const cli = (...args: string[]) => cliWith({}, ...args);
 
   it("exits non-zero with a usage line for an unknown command", () => {
@@ -161,6 +173,7 @@ describe("cli", () => {
       writeFileSync(keyFile(), `${keyText}\n`);
       chmodSync(keyFile(), mode);
       mkdirSync(runDir(), { recursive: true });
+      manifestFor(runDir(), pubkey);
       writeFileSync(join(runDir(), "unsigned.jsonl"), unsigned.map((e) => `${JSON.stringify(e)}\n`).join(""));
     }
 
@@ -237,6 +250,7 @@ describe("cli", () => {
 
     it("names MISE_KEY_FILE when the key file is missing", () => {
       mkdirSync(runDir(), { recursive: true });
+      manifestFor(runDir(), pubkey);
       writeFileSync(join(runDir(), "unsigned.jsonl"), `${JSON.stringify(unsigned[0])}\n`);
       const res = signCli("run1");
       expect(res.status).not.toBe(0);
@@ -249,9 +263,10 @@ describe("cli", () => {
     const pubkey = getPublicKey(secret);
     const runDir = () => join(dir, "out", "run1");
 
-    /** A signed run of one item by `secret`, which the config names as the curator. */
-    function signedRun() {
+    /** A signed run of one item by `secret`, built for a config whose curator is `curator`. */
+    function signedRun(curator = pubkey) {
       mkdirSync(runDir(), { recursive: true });
+      manifestFor(runDir(), curator);
       const coord = (JSON.parse(readFileSync("config.json", "utf8")) as { headerCoordinate: string }).headerCoordinate;
       const tags = [["d", "osm-node-1"], ["z", coord]];
       const ev = finalizeEvent({ kind: 39999, created_at: 1_700_000_000, content: "", tags }, secret);
@@ -291,7 +306,7 @@ describe("cli", () => {
     });
 
     it("publish refuses a run signed by someone else before connecting", () => {
-      signedRun();
+      signedRun("b".repeat(64));
       const res = cliWith({ curatorPubkey: "b".repeat(64) }, "publish", "run1");
       expect(res.status).not.toBe(0);
       expect(res.stderr).toMatch(/signed\.jsonl line 1: signed by [0-9a-f]{64}, not the curator/);

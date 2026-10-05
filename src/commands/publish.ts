@@ -6,6 +6,7 @@ import { validateEvent, verifyEvent } from "nostr-tools/pure";
 import { relayUrl, type Config } from "../config.js";
 import { contentHash } from "../diff.js";
 import { tagValue } from "../item.js";
+import { checkRunConfig } from "../manifest.js";
 import { connectRelay, publishEvent } from "../relay.js";
 import type { State } from "../state.js";
 
@@ -259,7 +260,8 @@ async function publishTo(run: Run, name: string): Promise<RelayPublishResult> {
 /**
  * Publishes `<runDir>/signed.jsonl` to the named relays (default: every configured relay).
  *
- * Every line is checked first (see readSigned) and one bad line sends nothing. Then each
+ * The run must have been built with this config (checkRunConfig), and every line is checked
+ * first (see readSigned): one bad line sends nothing. Then each
  * relay gets its own connection and throttle loop at `publish.eventsPerSecond`, all relays at
  * once, file order kept within each, so items go before deletions. Pairs the relay already
  * accepted are skipped, which makes a rerun resume an interrupted publish. Every result is
@@ -276,6 +278,7 @@ export async function publish(
   opts: PublishOptions = {},
 ): Promise<Record<string, RelayPublishResult>> {
   checkPublishConfig(cfg);
+  checkRunConfig(cfg, runDir);
   const names = selectRelays(cfg, relayNames);
   const run: Run = {
     cfg,
