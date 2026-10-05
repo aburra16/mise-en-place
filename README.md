@@ -267,4 +267,5 @@ The code is MIT; see `LICENSE`.
 
 | Date | Run | Created | Changed | Deleted | Relays | Notes |
 |---|---|---|---|---|---|---|
-| 2026-10-05 | 20261005T225258Z-pilot | 150 | 0 | 0 | dcosl | US pilot (`--first-run --pilot 150 --filter country=US`); verify clean on dcosl. Not yet on search. |
+| 2026-10-05 | 20261005T225258Z-pilot | 150 | 0 | 0 | dcosl | US pilot (`--first-run --pilot 150 --filter country=US`); verify clean on dcosl; published to search later the same day, verify clean. |
+| 2026-10-05 | 20261005T232509Z | 7804 | 0 | 0 | dcosl, search | Full import (fresh fetch, 7,954 in scope incl. the 150 pilot items). Verify: 7,954 on each relay, 0 missing/extra/stale; search extra check incomplete (one created_at, page cap 5,000), as expected. |
