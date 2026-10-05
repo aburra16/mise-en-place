@@ -47,6 +47,16 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["--relays"])).toThrow(/--relays/);
   });
 
+  it("takes --port with a number from 0 to 65535", () => {
+    expect(parseArgs(["--port", "4517"]).port).toBe(4517);
+    expect(parseArgs(["--port", "0"]).port).toBe(0);
+    expect(parseArgs([]).port).toBeUndefined();
+    expect(() => parseArgs(["--port"])).toThrow(/--port/);
+    for (const bad of ["abc", "-1", "65536", "80.5", ""]) {
+      expect(() => parseArgs(["--port", bad])).toThrow(/--port/);
+    }
+  });
+
   it("keeps positional arguments and refuses unknown options", () => {
     expect(parseArgs(["out/r1"]).positional).toEqual(["out/r1"]);
     expect(() => parseArgs(["--bogus"])).toThrow(/unknown option --bogus/);

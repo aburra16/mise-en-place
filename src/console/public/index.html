@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mise en Place console</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="page-header">
+    <h1>Mise en Place console</h1>
+    <p class="lede">A read-only view of the food and drink list on this machine. It shows every live item, with no trust filter and no cap. Nothing here publishes or changes anything.</p>
+    <nav aria-label="Sections">
+      <a href="#overview">Overview</a>
+      <a href="#table">Table</a>
+      <a href="#map">Map</a>
+      <a href="#diff">Diff</a>
+      <a href="#runs">Runs</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="overview" aria-labelledby="overview-heading">
+      <h2 id="overview-heading">Overview</h2>
+      <div id="overview-stats" class="stats" aria-live="polite"></div>
+      <h3>Latest run</h3>
+      <div id="overview-run" class="scroll"></div>
+      <h3>Field coverage</h3>
+      <p class="hint">The share of live items that carry each tag.</p>
+      <div id="overview-coverage" class="scroll"></div>
+      <h3>Relays</h3>
+      <p class="hint">Reads each relay and compares it with the live items in state. This can take a few seconds.</p>
+      <p class="actions">
+        <button type="button" id="relays-button">Check relays</button>
+        <span id="relays-status" role="status"></span>
+      </p>
+      <div id="relays-result"></div>
+    </section>
+
+    <section id="table" aria-labelledby="table-heading">
+      <h2 id="table-heading">Table</h2>
+      <form id="filters" class="filters" autocomplete="off">
+        <label>Name contains <input type="search" name="q"></label>
+        <label>Category <input type="text" name="category"></label>
+        <label>Country <input type="text" name="country"></label>
+        <label>Locality <input type="text" name="locality"></label>
+        <label>Cuisine <input type="text" name="cuisine"></label>
+        <button type="button" id="filters-clear">Clear filters</button>
+      </form>
+      <p class="hint">Category, country, locality and cuisine match the whole value, ignoring case. Click a value in the table to filter on it.</p>
+      <div class="pager">
+        <span id="table-range" role="status"></span>
+        <span class="pager-buttons">
+          <button type="button" id="table-prev">Previous</button>
+          <button type="button" id="table-next">Next</button>
+        </span>
+      </div>
+      <div class="scroll">
+        <table id="items-table">
+          <caption class="visually-hidden">Live items</caption>
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Category</th>
+              <th scope="col">Locality</th>
+              <th scope="col">Country</th>
+              <th scope="col">Cuisine</th>
+              <th scope="col">Item JSON</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="map" aria-labelledby="map-heading">
+      <h2 id="map-heading">Map</h2>
+      <p id="map-status" role="status">Loading places.</p>
+      <div id="map-canvas" role="region" aria-label="Map of every live item"></div>
+    </section>
+
+    <section id="diff" aria-labelledby="diff-heading">
+      <h2 id="diff-heading">Diff</h2>
+      <p class="hint">What the next full build would do, from the latest cache against the live items.</p>
+      <div id="diff-body"></div>
+    </section>
+
+    <section id="runs" aria-labelledby="runs-heading">
+      <h2 id="runs-heading">Runs</h2>
+      <p class="hint">Events recorded per publish run and relay. A failed count includes events that were recorded as pending and never answered; run publish again to retry them.</p>
+      <div id="runs-body"></div>
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <p>Data © OpenStreetMap contributors, ODbL 1.0. Seeded from BTC Map.</p>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

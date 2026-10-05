@@ -11,6 +11,8 @@ export interface LiveItem {
 
 export interface State {
   liveItems(): Map<string, LiveItem>;
+  /** How many items are live and how many were deleted, for the console's overview. */
+  counts(): { live: number; deleted: number };
   /** Every kind-39999 event id ever recorded for `d`, on any relay, ok or not. Oldest first. */
   versionsOf(d: string): string[];
   acceptedOn(eventId: string, relay: string): boolean;
@@ -81,6 +83,9 @@ export function openState(path: string): State {
     `SELECT d, content_hash AS contentHash, tags_json AS tagsJson, latest_event_id AS latestEventId
        FROM items WHERE status = 'live' ORDER BY d`,
   );
+  const selectCounts = db.prepare(
+    "SELECT COALESCE(SUM(status = 'live'), 0) AS live, COALESCE(SUM(status = 'deleted'), 0) AS deleted FROM items",
+  );
   const selectVersions = db.prepare(
     `SELECT event_id AS eventId FROM events
       WHERE d = ? AND kind = ${ITEM_KIND}
@@ -120,6 +125,9 @@ export function openState(path: string): State {
       const items = new Map<string, LiveItem>();
       for (const row of selectLive.all() as LiveItem[]) items.set(row.d, row);
       return items;
+    },
+    counts() {
+      return selectCounts.get() as { live: number; deleted: number };
     },
     versionsOf(d) {
       return (selectVersions.all(d) as { eventId: string }[]).map((row) => row.eventId);

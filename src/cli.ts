@@ -7,6 +7,7 @@ import { publish, type RelayPublishResult } from "./commands/publish.js";
 import { sign } from "./commands/sign.js";
 import { verify, verifySummary, type RelayVerifyResult } from "./commands/verify.js";
 import { loadConfig } from "./config.js";
+import { startConsole } from "./console/server.js";
 import { fetchPlaces, latestCachePath } from "./source/btcmap.js";
 import { openState } from "./state.js";
 
@@ -24,7 +25,7 @@ function only(name: string, args: CliArgs, allowed: string[] = []): void {
   allowOptions(name, args, allowed);
 }
 
-/** Commands by script name. Task 9 registers console. */
+/** Commands by script name. */
 const commands = new Map<string, Command>([
   [
     "fetch",
@@ -142,6 +143,28 @@ const commands = new Map<string, Command>([
       const r = await rebroadcastHeader(loadConfig(), name);
       if (!r.ok) throw new Error(`${name} refused header ${r.eventId}: ${r.message}`);
       console.log(`copied header ${r.eventId} to ${name}${r.message === "" ? "" : ` (${r.message})`}`);
+    },
+  ],
+  [
+    "console",
+    async (args) => {
+      only("console", args, ["--port"]);
+      const cfg = loadConfig();
+      const state = openState(cfg.paths.state);
+      try {
+        const server = await startConsole(cfg, state, args.port);
+        try {
+          console.log(`console at ${server.url} (read-only; Ctrl-C to stop)`);
+          await new Promise<void>((resolve) => {
+            process.once("SIGINT", resolve);
+            process.once("SIGTERM", resolve);
+          });
+        } finally {
+          await server.close();
+        }
+      } finally {
+        state.close();
+      }
     },
   ],
 ]);

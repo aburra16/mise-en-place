@@ -105,6 +105,19 @@ describe("items", () => {
 
     expect(state.liveItems().size).toBe(0);
   });
+
+  it("counts items by status, and a revived item counts as live again", () => {
+    expect(state.counts()).toEqual({ live: 0, deleted: 0 });
+    state.markLive("osm-node-1", "hash-a", "[1]", "e1", 100);
+    state.markLive("osm-node-2", "hash-b", "[2]", "e2", 100);
+    state.markLive("osm-node-3", "hash-c", "[3]", "e3", 100);
+    state.markDeleted("osm-node-2", 200);
+    state.markDeleted("osm-node-3", 200);
+    expect(state.counts()).toEqual({ live: 1, deleted: 2 });
+
+    state.markLive("osm-node-3", "hash-d", "[4]", "e4", 300);
+    expect(state.counts()).toEqual({ live: 2, deleted: 1 });
+  });
 });
 
 describe("events", () => {

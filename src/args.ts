@@ -9,6 +9,8 @@ export interface CliArgs {
   allowDeletions: boolean;
   /** `--relays a,b` */
   relays?: string[];
+  /** `--port N`, 0 to 65535 (0 lets the OS choose). */
+  port?: number;
 }
 
 /** The option names present in `args`, for a command to refuse the ones it does not take. */
@@ -18,11 +20,12 @@ export function givenOptions(args: CliArgs): string[] {
   if (args.filter !== undefined) given.push("--filter");
   if (args.allowDeletions) given.push("--allow-deletions");
   if (args.relays !== undefined) given.push("--relays");
+  if (args.port !== undefined) given.push("--port");
   return given;
 }
 
 /**
- * Parses `--pilot [N]`, `--filter key=value`, `--allow-deletions` and `--relays a,b`.
+ * Parses `--pilot [N]`, `--filter key=value`, `--allow-deletions`, `--relays a,b` and `--port N`.
  * Anything else starting with `-` is refused; the rest is positional.
  */
 export function parseArgs(argv: string[]): CliArgs {
@@ -62,6 +65,14 @@ export function parseArgs(argv: string[]): CliArgs {
         const names = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter((s) => s !== "");
         if (names.length === 0) throw new Error("--relays needs names, e.g. --relays dcosl,search");
         args.relays = names;
+        break;
+      }
+      case "--port": {
+        const value = argv[++i];
+        if (value === undefined || !/^\d+$/.test(value) || Number(value) > 65535) {
+          throw new Error("--port needs a port number from 0 to 65535, e.g. --port 4517");
+        }
+        args.port = Number(value);
         break;
       }
       default:
