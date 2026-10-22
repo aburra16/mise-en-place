@@ -47,12 +47,13 @@ These values live in `config.json` and are checked at run time (§ 6.4). Nothing
 - **Profile (kind 0) and `bot: true`:** deferred. The goal right now is a working, indexable list.
 - **Registration in Brainstorm-UI:** Avi will raise it with Vinney after the list is built.
 - **Repo:** `aburra16/mise-en-place`, public.
+- **Several cuisines (2026-10-22):** one `cuisine` tag per value, primary (the first OSM value) first. Values are split on `;` and also on `,`, which some mappers use by mistake. This replaces the first value alone, which left 945 of 7,954 places with only their first cuisine in `cuisine`.
 
 ### Defaults taken here (Avi did not object)
 
 - Stack: Node 20+ and TypeScript; `nostr-tools` for keys, NIP-19, NIP-49 and signing; `@rapideditor/country-coder` (ISC) for offline country lookup; `ngeohash` (MIT); `better-sqlite3` for state.
 - Breweries, wineries and distilleries (OSM `craft=*`) are in. Caterers and marketplaces are out.
-- One `cuisine` field value; `verified_at` is not carried.
+- `verified_at` is not carried.
 - `country` is computed offline from coordinates, so no extra API calls are made.
 - The field name `category` stays, because the header is already signed with it.
 - A full fetch on every run (3 s) rather than `updated_since` incremental sync. It is simpler, and diffing against local state gives the same result.
@@ -84,7 +85,7 @@ Kind 39999. Tags in this order. A field with no value is omitted, never written 
 | `region` | `osm:addr:state` | Verbatim |
 | `postal-code` | `osm:addr:postcode` | Verbatim |
 | `country` | `lat`, `lon` | ISO 3166-1 alpha-2 from country-coder. If country-coder finds none, fall back to `osm:addr:country`; if that is empty too, omit. |
-| `cuisine` | `osm:cuisine` | First `;`-separated value, trimmed, lowercased |
+| `cuisine` × n | `osm:cuisine` | One tag per value, split on `;` and `,`: spaces and stray `_` trimmed from the ends, lowercased, deduplicated, source order kept, so the first is the primary cuisine |
 | `osm-id` | `osm_id` | Verbatim, e.g. `node:10011069455` |
 | `lat`, `lon` | `lat`, `lon` | As strings, as received |
 | `website` | `website` | Verbatim (BTC Map validates it as a URL) |
@@ -97,7 +98,7 @@ Kind 39999. Tags in this order. A field with no value is omitted, never written 
 | `source` | constant | `btcmap` |
 | `license` | constant | `ODbL-1.0` |
 | `g` × 4 | `lat`, `lon` | Geohash at 9 characters, then prefixes of 6, 5 and 4 |
-| `t` × n | derived | Category with `_` as a space; every cuisine value; locality. Lowercased, deduplicated, original order kept. |
+| `t` × n | derived | Category with `_` as a space; every cuisine value (as in `cuisine`); locality. Lowercased, deduplicated, original order kept. |
 | `alt` | derived | `Food and drink place: <name>, <locality>`, or `<name>` alone without a locality |
 
 **`accepts-bitcoin`:**

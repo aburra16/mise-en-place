@@ -243,6 +243,22 @@ describe("GET /api/items", () => {
     expect(body.items[0]!.t).toEqual(["thai", "lao"]);
   });
 
+  it("filters on any value of a tag that appears twice, not only the first", async () => {
+    const tags: Tags = [
+      ["d", "osm-node-9"],
+      ["z", cfg.headerCoordinate],
+      ["name", "Dup"],
+      ["cuisine", "thai"],
+      ["cuisine", "lao"],
+    ];
+    state.markLive("osm-node-9", contentHash(tags), JSON.stringify(tags), "ev-9", 1000);
+    await start();
+
+    expect(names((await api<ItemsBody>("/api/items?cuisine=thai")).body)).toEqual(["Dup"]);
+    expect(names((await api<ItemsBody>("/api/items?cuisine=LAO")).body)).toEqual(["Dup"]);
+    expect((await api<ItemsBody>("/api/items?cuisine=la")).body.total).toBe(0);
+  });
+
   it("filters by category and by q, a case-insensitive name substring", async () => {
     seedLive(SEED);
     await start();

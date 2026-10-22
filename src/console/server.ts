@@ -116,10 +116,11 @@ function items(state: State, query: URLSearchParams): unknown {
     return value === "" ? [] : [[name, value] as const];
   });
 
+  // A filter matches any value of its tag, so a place's second cuisine finds it too.
   const matching = readLive(state).filter(
     (row) =>
       (q === "" || (row.fields.name ?? "").toLowerCase().includes(q)) &&
-      exact.every(([name, value]) => (row.fields[name] ?? "").toLowerCase() === value),
+      exact.every(([name, value]) => row.tags.some((t) => t[0] === name && (t[1] ?? "").toLowerCase() === value)),
   );
   return {
     total: matching.length,
