@@ -54,13 +54,18 @@ export function countryOf(place: Place): string | undefined {
   return iso1A2Code([place.lon, place.lat], { level: "territory" }) ?? place.countryTag;
 }
 
-/** The `;`-separated cuisine values: trimmed, lowercased, empty parts dropped. */
+/**
+ * The cuisine values, split on `;` (OSM's separator) and on `,` (a common mapping slip):
+ * spaces and stray `_` trimmed from the ends, lowercased, empty parts dropped, deduplicated,
+ * original order kept, so the first is the primary cuisine.
+ */
 function cuisineValues(cuisine: string | undefined): string[] {
   if (cuisine === undefined) return [];
-  return cuisine
-    .split(";")
-    .map((v) => v.trim().toLowerCase())
+  const values = cuisine
+    .split(/[;,]/)
+    .map((v) => v.replace(/^[\s_]+|[\s_]+$/g, "").toLowerCase())
     .filter((v) => v !== "");
+  return [...new Set(values)];
 }
 
 /**
@@ -100,7 +105,7 @@ export function buildItem(place: Place, category: string, headerCoordinate: stri
   add("region", place.state);
   add("postal-code", place.postcode);
   add("country", countryOf(place));
-  add("cuisine", cuisineValues(place.cuisine)[0]);
+  for (const c of cuisineValues(place.cuisine)) add("cuisine", c);
   add("osm-id", place.osmId);
   add("lat", String(place.lat));
   add("lon", String(place.lon));

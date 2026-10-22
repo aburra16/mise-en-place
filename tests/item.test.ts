@@ -103,6 +103,10 @@ describe("deriveT", () => {
   it("dedupes a cuisine that repeats the category or the locality", () => {
     expect(deriveT("cafe", "cafe", "Cafe")).toEqual(["cafe"]);
   });
+
+  it("splits cuisine on commas as well as semicolons", () => {
+    expect(deriveT("restaurant", "döner, pizza", undefined)).toEqual(["restaurant", "döner", "pizza"]);
+  });
 });
 
 describe("buildItem", () => {
@@ -135,16 +139,43 @@ describe("buildItem", () => {
     ]);
   });
 
-  it("takes the first cuisine value, lowercased, and keeps them all in t", () => {
+  it("writes one cuisine tag per value, lowercased, in source order, and keeps them all in t", () => {
     const tags = buildItem(place({ cuisine: " Pizza;Italian", city: "Rome" }), "restaurant", COORD);
-    expect(tags.filter((t) => t[0] === "cuisine")).toEqual([["cuisine", "pizza"]]);
+    expect(tags.filter((t) => t[0] === "cuisine")).toEqual([
+      ["cuisine", "pizza"],
+      ["cuisine", "italian"],
+    ]);
     const t = tags.filter((x) => x[0] === "t").map((x) => x[1]);
     expect(t).toEqual(["restaurant", "pizza", "italian", "rome"]);
   });
 
+  it("writes a cuisine given twice once", () => {
+    const tags = buildItem(place({ cuisine: "burger;Burger;fries" }), "fast_food", COORD);
+    expect(tags.filter((t) => t[0] === "cuisine")).toEqual([
+      ["cuisine", "burger"],
+      ["cuisine", "fries"],
+    ]);
+  });
+
+  it("splits on commas, and trims spaces and stray underscores at the ends of a value", () => {
+    const comma = buildItem(place({ cuisine: "turkish,pizza, burger, chicken,kebab" }), "fast_food", COORD);
+    expect(comma.filter((t) => t[0] === "cuisine").map((t) => t[1])).toEqual([
+      "turkish",
+      "pizza",
+      "burger",
+      "chicken",
+      "kebab",
+    ]);
+    const underscored = buildItem(place({ cuisine: "Cheese_Fondue,_French_and_Asian_Cuisine" }), "restaurant", COORD);
+    expect(underscored.filter((t) => t[0] === "cuisine").map((t) => t[1])).toEqual([
+      "cheese_fondue",
+      "french_and_asian_cuisine",
+    ]);
+  });
+
   it("skips an empty leading cuisine part instead of writing an empty tag", () => {
     const tags = buildItem(place({ cuisine: ";Italian" }), "restaurant", COORD);
-    expect(first(tags, "cuisine")).toBe("italian");
+    expect(tags.filter((t) => t[0] === "cuisine")).toEqual([["cuisine", "italian"]]);
     expect(tags.every((t) => t.every((v) => v !== ""))).toBe(true);
   });
 
@@ -169,7 +200,7 @@ describe("buildItem", () => {
     });
     expect(names(buildItem(full, "restaurant", COORD))).toEqual([
       "d", "z", "name", "category", "address", "locality", "region", "postal-code", "country",
-      "cuisine", "osm-id", "lat", "lon", "website", "phone", "opening-hours", "description",
+      "cuisine", "cuisine", "osm-id", "lat", "lon", "website", "phone", "opening-hours", "description",
       "image", "accepts-bitcoin", "btcmap-id", "source", "license",
       "g", "g", "g", "g", "t", "t", "t", "t", "alt",
     ]);
