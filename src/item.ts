@@ -105,7 +105,8 @@ export function buildItem(place: Place, category: string, headerCoordinate: stri
   add("region", place.state);
   add("postal-code", place.postcode);
   add("country", countryOf(place));
-  for (const c of cuisineValues(place.cuisine)) add("cuisine", c);
+  const [primaryCuisine, ...otherCuisines] = cuisineValues(place.cuisine);
+  add("cuisine", primaryCuisine);
   add("osm-id", place.osmId);
   add("lat", String(place.lat));
   add("lon", String(place.lon));
@@ -118,6 +119,8 @@ export function buildItem(place: Place, category: string, headerCoordinate: stri
   add("btcmap-id", place.sourceId);
   add("source", "btcmap");
   add("license", "ODbL-1.0");
+  // After license, so the fields before it keep the places positional readers expect.
+  for (const c of otherCuisines) add("cuisine", c);
   for (const g of geohashes(place.lat, place.lon)) add("g", g);
   for (const t of deriveT(category, place.cuisine, place.city)) add("t", t);
   add(
