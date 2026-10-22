@@ -200,10 +200,55 @@ describe("buildItem", () => {
     });
     expect(names(buildItem(full, "restaurant", COORD))).toEqual([
       "d", "z", "name", "category", "address", "locality", "region", "postal-code", "country",
-      "cuisine", "cuisine", "osm-id", "lat", "lon", "website", "phone", "opening-hours", "description",
-      "image", "accepts-bitcoin", "btcmap-id", "source", "license",
+      "cuisine", "osm-id", "lat", "lon", "website", "phone", "opening-hours", "description",
+      "image", "accepts-bitcoin", "btcmap-id", "source", "license", "cuisine",
       "g", "g", "g", "g", "t", "t", "t", "t", "alt",
     ]);
+  });
+
+  it("keeps the primary cuisine after country and the others after license, so the fields before license never move", () => {
+    const tags = buildItem(place({ cuisine: "thai;lao;vietnamese" }), "restaurant", COORD);
+    const at = (name: string): number => names(tags).indexOf(name);
+    const cuisines = tags.flatMap((t, i) => (t[0] === "cuisine" ? [[i, t[1]] as const] : []));
+    expect(cuisines.map(([, v]) => v)).toEqual(["thai", "lao", "vietnamese"]);
+    expect(cuisines[0]![0]).toBeLessThan(at("osm-id"));
+    for (const [i] of cuisines.slice(1)) {
+      expect(i).toBeGreaterThan(at("license"));
+      expect(i).toBeLessThan(at("g"));
+    }
+  });
+
+  it("builds a single-cuisine place exactly as before", () => {
+    expect(buildItem(place({ cuisine: "Pizza", city: "Rome" }), "restaurant", COORD)).toEqual([
+      ["d", "osm-node-7"],
+      ["z", COORD],
+      ["name", "X"],
+      ["category", "restaurant"],
+      ["locality", "Rome"],
+      ["cuisine", "pizza"],
+      ["osm-id", "node:7"],
+      ["lat", "-40"],
+      ["lon", "-140"],
+      ["accepts-bitcoin", "yes"],
+      ["btcmap-id", "7"],
+      ["source", "btcmap"],
+      ["license", "ODbL-1.0"],
+      ...geohashes(-40, -140).map((g) => ["g", g]),
+      ["t", "restaurant"],
+      ["t", "pizza"],
+      ["t", "rome"],
+      ["alt", "Food and drink place: X, Rome"],
+    ]);
+  });
+
+  it("writes no cuisine for a value of only spaces and underscores", () => {
+    const tags = buildItem(place({ cuisine: " _ ;__" }), "restaurant", COORD);
+    expect(tags.some((t) => t[0] === "cuisine")).toBe(false);
+  });
+
+  it("splits a value that mixes semicolons and commas, and lowercases beyond ASCII", () => {
+    const tags = buildItem(place({ cuisine: "DÖNER;_pizza_, Pizza;kebab" }), "fast_food", COORD);
+    expect(tags.filter((t) => t[0] === "cuisine").map((t) => t[1])).toEqual(["döner", "pizza", "kebab"]);
   });
 
   it("maps each source field to its tag", () => {

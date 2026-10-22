@@ -47,7 +47,7 @@ These values live in `config.json` and are checked at run time (§ 6.4). Nothing
 - **Profile (kind 0) and `bot: true`:** deferred. The goal right now is a working, indexable list.
 - **Registration in Brainstorm-UI:** Avi will raise it with Vinney after the list is built.
 - **Repo:** `aburra16/mise-en-place`, public.
-- **Several cuisines (2026-10-22):** one `cuisine` tag per value, primary (the first OSM value) first. Values are split on `;` and also on `,`, which some mappers use by mistake. This replaces the first value alone, which left 945 of 7,954 places with only their first cuisine in `cuisine`.
+- **Several cuisines (2026-10-22):** one `cuisine` tag per value, primary (the first OSM value) first. Values are split on `;` and also on `,`, which some mappers use by mistake. This replaces the first value alone, which left 959 of 7,954 places with only their first cuisine in `cuisine`.
 
 ### Defaults taken here (Avi did not object)
 
@@ -72,7 +72,7 @@ The lists live in `config.json` so the scope can change without a code change. A
 
 ## 5. Item shape
 
-Kind 39999. Tags in this order. A field with no value is omitted, never written empty. Order matters because Tapestry's Items read keeps the first 20 properties and every reader takes the first value of a field.
+Kind 39999. Tags in this order. A field with no value is omitted, never written empty. Order matters because Tapestry's Items read keeps the first 20 properties, every reader takes the first value of a field, and Brainstorm's search results show the first four short values in tag order. So the primary cuisine keeps its place after `country`, and any other cuisines go after `license`: the tags before `license` are where they were before items carried several cuisines.
 
 | Tag | Source | Rule |
 |---|---|---|
@@ -85,7 +85,7 @@ Kind 39999. Tags in this order. A field with no value is omitted, never written 
 | `region` | `osm:addr:state` | Verbatim |
 | `postal-code` | `osm:addr:postcode` | Verbatim |
 | `country` | `lat`, `lon` | ISO 3166-1 alpha-2 from country-coder. If country-coder finds none, fall back to `osm:addr:country`; if that is empty too, omit. |
-| `cuisine` × n | `osm:cuisine` | One tag per value, split on `;` and `,`: spaces and stray `_` trimmed from the ends, lowercased, deduplicated, source order kept, so the first is the primary cuisine |
+| `cuisine` | `osm:cuisine` | The primary cuisine: split the value on `;` and `,`, trim spaces and stray `_` from the ends of each part, lowercase, drop empty parts, and take the first |
 | `osm-id` | `osm_id` | Verbatim, e.g. `node:10011069455` |
 | `lat`, `lon` | `lat`, `lon` | As strings, as received |
 | `website` | `website` | Verbatim (BTC Map validates it as a URL) |
@@ -97,6 +97,7 @@ Kind 39999. Tags in this order. A field with no value is omitted, never written 
 | `btcmap-id` | `id` | As a string |
 | `source` | constant | `btcmap` |
 | `license` | constant | `ODbL-1.0` |
+| `cuisine` × n | `osm:cuisine` | Every other cuisine value, the same way, deduplicated, source order kept |
 | `g` × 4 | `lat`, `lon` | Geohash at 9 characters, then prefixes of 6, 5 and 4 |
 | `t` × n | derived | Category with `_` as a space; every cuisine value (as in `cuisine`); locality. Lowercased, deduplicated, original order kept. |
 | `alt` | derived | `Food and drink place: <name>, <locality>`, or `<name>` alone without a locality |
